@@ -1,0 +1,117 @@
+[project]
+name = "trainax"
+version = "0.1.0"
+description = "Convenient data loader and training utilites for JAX models"
+readme = "README.md"
+authors = [
+    { name = "Nikolai Koehler", email = "nikolai.koehler@cos.uni-heidelberg.de" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "jax>=0.7.1",
+    "jaxtyping>=0.3.2",
+    "rich>=14.1.0",
+    "tqdm>=4.67.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.urls]
+Source = ""
+Documentation = ""
+Publication = ""
+
+
+[tool.isort]
+profile = "black"
+line_length = 80
+multi_line_output = 3
+sections = [
+    "TEST", "FUTURE", "STDLIB", "THIRDPARTY", "SCIENTIFIC", "PLOTTING",
+    "FIRSTPARTY", "LOCALFOLDER"
+]
+known_scientific = [
+    "equinox", "jax", "jaxtyping", "numpy", "numba", "ott", "pandas", "pytorch",
+    "scipy", "sklearn",
+]
+known_test = ["pytest"]
+known_plotting = ["matplotlib", "seaborn"]
+
+
+[tool.ruff]
+target-version = "py311"
+indent-width = 4
+line-length = 80
+fix = true
+include = ["pyproject.toml", "src/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.lint]
+ignore = ["F722"]
+select = [
+    # adpated from jax-ott
+    "D", # flake8-docstrings
+    "E", # pycodestyle
+    "F", # pyflakes
+    "W", # pycodestyle
+    "Q", # flake8-quotes
+    "SIM", # flake8-simplify
+    "TID",  # flake-8-tidy-imports
+    "NPY",  # NumPy-specific rules
+    "PT",  # flake8-pytest-style
+    "B", # flake8-bugbear
+    "UP", # pyupgrade
+    "C4", # flake8-comprehensions,
+    "C90", # complexity rules
+    "BLE", # flake8-blind-except
+    "T20",  # flake8-print
+    "RET", # flake8-raise
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "double"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+filterwarnings = [
+    "error"
+]
+testpaths = ["tests"]
+
+
+[tool.coverage.run]
+omit = [
+    "*/__init__.py",
+    "test*.py"
+]
+
+[tool.coverage.xml]
+output = "coverage/coverage.xml"
+
+[tool.coverage.html]
+show_contexts = true
+directory = "coverage/html"
+
+[dependency-groups]
+dev = [
+    "debugpy>=1.8.16",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12.10",
+]
