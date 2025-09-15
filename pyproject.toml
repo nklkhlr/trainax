@@ -112,6 +112,7 @@ directory = "coverage/html"
 [dependency-groups]
 dev = [
     "debugpy>=1.8.16",
+    "equinox>=0.13.0",
     "pytest-cov>=6.2.1",
     "ruff>=0.12.10",
 ]

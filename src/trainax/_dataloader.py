@@ -235,7 +235,7 @@ class SingleBatchJaxLoader(JaxLoader):
 
     def __init__(
         self,
-        data: dict[str, Array | NDArray],
+        data: dict,
         sharding: jsd.NamedSharding | jsd.SingleDeviceSharding | None = None,
         seed: int = 42,
     ):
@@ -248,7 +248,7 @@ class SingleBatchJaxLoader(JaxLoader):
                 stacklevel=1,
                 category=UserWarning,
             )
-        self._batch_size = 1
+        self._batch_size = self.n_points
 
     def _set_sharding(
         self, sharding: jsd.NamedSharding | jsd.SingleDeviceSharding | None
@@ -282,6 +282,9 @@ class SingleBatchJaxLoader(JaxLoader):
             key: jax.make_array_from_process_local_data(self._sharding, arr)
             for key, arr in batch.items()
         }
+
+    def __len__(self) -> int:
+        return 1
 
     def flatten_with_keys(self):  # pyright: ignore
         children = (jtu.GetAttrKey("_data"), self._data)

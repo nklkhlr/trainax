@@ -68,6 +68,8 @@ class Trainer:
         self._set_sharding(model_sharding, "model")
         self._set_sharding(data_sharding, "data")
 
+        self._aggregate_steps = aggregate_steps
+
     @property
     def aggregate_steps(self):
         return self._aggregate_steps
@@ -75,6 +77,11 @@ class Trainer:
     def set_aggregate_steps(
         self, aggregate_steps: Literal["mean", "min", "max"]
     ):
+        if aggregate_steps not in self._agg_funs:
+            raise ValueError(
+                f"Invalid aggregate_steps: {aggregate_steps}. "
+                f"Must be one of {list(self._agg_funs.keys())}"
+            )
         self._aggregate_steps = aggregate_steps
 
     def _set_sharding(
