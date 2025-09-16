@@ -3,9 +3,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from jax.tree_util import register_dataclass
 from jaxtyping import Array, Float, PyTree
 from numpy.typing import NDArray
-from pydantic.dataclasses import dataclass
+# from pydantic.dataclasses import dataclass
+from dataclasses import dataclass
 
 PathLike = os.PathLike | Path | str
 
@@ -13,28 +15,28 @@ PathLike = os.PathLike | Path | str
 @dataclass
 class StepOutput:
     loss: float
-    y: Float[NDArray | Array, " batch_size"]
-    yhat: Float[NDArray | Array, " batch_size"]
+    y: NDArray | Array
+    yhat: NDArray | Array
     gradients: PyTree | None = None
 
 
 @dataclass
 class ValStepOutput:
     loss: float
-    y: Float[NDArray | Array, " batch_size"]
-    yhat: Float[NDArray | Array, " batch_size"]
+    y: NDArray | Array
+    yhat: NDArray | Array
 
 
 @dataclass
 class EpochOutput:
     train_loss: float
-    train_losses: Float[NDArray, " n_batches"]
-    y: Float[NDArray, " n_train_points"]
-    yhat: Float[NDArray, " n_train_points"]
+    train_losses: NDArray
+    y: NDArray
+    yhat: NDArray
     gradients: list[PyTree]
     val_loss: float | None = None
-    val_y: Float[NDArray, " n_val_points"] | None = None
-    val_yhat: Float[NDArray, " n_val_points"] | None = None
+    val_y: NDArray | None = None
+    val_yhat: NDArray | None = None
     metrics: dict[str, float] | None = None
 
     @classmethod
@@ -66,3 +68,7 @@ class EpochOutput:
             val_y=val_y,
             val_yhat=val_yhat,
         )
+
+
+register_dataclass(StepOutput)
+register_dataclass(ValStepOutput)

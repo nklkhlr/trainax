@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Callable
-from typing import Literal, TextIO
+from typing import Any, Literal, TextIO
 
 import numpy as np
 from jaxtyping import Float, Int
@@ -51,12 +51,16 @@ class EpochLogger(Callback):
 
     def __init__(
         self,
-        logger: logging.Logger,
+        logger: logging.Logger | None = None,
         name: str = "EpochLogger",
         has_validation: bool = True,
     ):
         super().__init__(name)
+
+        if logger is None:
+            logger = logging.getLogger(name)
         self.logger = logger
+
         self._last_val_loss = np.nan
         if has_validation:
             self._val_message = self._val_msg
@@ -173,7 +177,7 @@ class LossMetricTracker(Callback):
 
 
 class BestModelSaver(Callback):
-    save_model: Callable
+    save_model: Callable[..., Any]
     _key: str
     _best_val: float
     _get_val: Callable[[EpochOutput], float]
@@ -181,7 +185,7 @@ class BestModelSaver(Callback):
 
     def __init__(
         self,
-        save_fun: Callable[[Callable]],
+        save_fun: Callable[[Callable[..., Any]], None],
         name: str = "BestModelSaver",
         key: Literal["train_loss", "val_loss"] | str = "val_loss",
         criterion: Literal["min", "max"] = "min",
@@ -247,7 +251,7 @@ class BestModelSaver(Callback):
 
     def on_epoch_end(
         self,
-        model: Callable,
+        model: Callable[..., Any],
         pbar: tqdm,
         epoch: int,
         epoch_output: EpochOutput,

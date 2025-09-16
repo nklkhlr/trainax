@@ -1,11 +1,13 @@
 from collections.abc import Callable
 from typing import Literal
 
+import equinox as eqx
 import jax
 import jax.sharding as jsd
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 from numpy.typing import NDArray
+from optax import GradientTransformation
 from tqdm import tqdm, trange
 from tqdm.rich import tqdm as rich_tqdm
 from tqdm.rich import trange as rich_trange
@@ -13,15 +15,12 @@ from tqdm.rich import trange as rich_trange
 from trainax._callbacks import Callback
 from trainax._dataloader import JaxLoader
 from trainax._file_handler import FileHandler
-from trainax._types import EpochOutput, StepOutput, ValStepOutput
+from trainax._types import EpochOutput, PathLike, StepOutput, ValStepOutput
 
 StepFun = Callable[[Callable, dict[str, NDArray | Array]], StepOutput]
 
 
 class Trainer:
-    model: Callable
-    make_step: StepFun
-    val_step: StepFun | None
     callbacks: dict[str, Callback]
     file_handlers: dict[str, FileHandler]
 
@@ -39,24 +38,18 @@ class Trainer:
 
     def __init__(
         self,
-        model: Callable,
-        make_step: StepFun,
         n_epochs: int,
         callbacks: list[Callback],
-        file_handler: FileHandler,
-        val_step: StepFun | None = None,
+        continuous_files: dict[str, PathLike] | None = None,
         val_every: int = 5,
         use_rich: bool = True,
         model_sharding: list[int] | int | jsd.NamedSharding | None = None,
         data_sharding: list[int] | int | jsd.NamedSharding | None = None,
         aggregate_steps: Literal["mean", "min", "max"] = "mean",
     ):
-        self.model = model
-        self.make_step = make_step
-        self.val_step = val_step
         self.callbacks = {callback.name: callback for callback in callbacks}
 
-        self.file_handler = file_handler
+        self.file_handler = FileHandler(continuous_files or {})
         self.n_epochs = n_epochs
         self.val_every = val_every
         self.use_rich = use_rich
@@ -90,7 +83,7 @@ class Trainer:
             raise ValueError(
                 f"Invalid sharding kind: {kind}. Must be 'data' or 'model'"
             )
-        if kind == "model":
+        if kind == "model" and sharding is not None:
             raise ValueError("Model sharding is not yet supported")
 
         if sharding is None:
@@ -158,7 +151,7 @@ class Trainer:
         return loader
 
     def _validation(
-        self, epoch: int, valloader: JaxLoader
+        self, epoch: int, val_step: StepFun, valloader: JaxLoader
     ) -> list[ValStepOutput]:
         step_results = []
 
@@ -169,7 +162,7 @@ class Trainer:
             for data in self._step_pbar(valloader, desc="Validation steps"):  # type: ignore
                 # we check whether val_step is none when val data is given in
                 # `train`
-                step_results.append(jax.jit(self.val_step)(data))  # type: ignore
+                step_results.append(val_step(data))  # type: ignore
 
         for callback in self.callbacks.values():
             callback.on_val_end(epoch=epoch, data=step_results)
@@ -184,13 +177,27 @@ class Trainer:
             if valloader is not None:
                 valloader.set_sharding(data_sharding)
 
-        # TODO: add in model sharding on self.model
+        # TODO: add in model sharding on .model
 
         return trainloader, valloader
 
-    def train(self, trainloader: JaxLoader, valloader: JaxLoader | None):
+    def update(self, model, optim: GradientTransformation, grads: PyTree, opt_state: PyTree):
+        updates, opt_state = optim.update(grads, opt_state)
+        # TODO: option to apply updates with other libraries
+        model = eqx.apply_updates(model, updates)
+
+    def train(
+        self,
+        model: Callable,
+        optim: GradientTransformation,
+        train_step: StepFun,
+        trainloader: JaxLoader,
+        val_step: StepFun | None,
+        valloader: JaxLoader | None,
+        jit_fun: Callable = eqx.filter_jit,
+    ) -> Callable:
         agg_fun = self._agg_funs[self._aggregate_steps]
-        if valloader is not None and self.val_step is None:
+        if valloader is not None and val_step is None:
             raise ValueError(
                 "'valloader' provided but val_step is not defined. "
                 "Please set the validation step function "
@@ -198,6 +205,14 @@ class Trainer:
             )
 
         self._prep_data(trainloader, valloader)
+
+        @jit_fun
+        def _update(model_, data_, opt_state_):
+            out = train_step(model_, data_)
+            jax.debug.print("step taken")
+            updates, opt_state_ = optim.update(out.gradients, opt_state_)
+            model_ = eqx.apply_updates(model_, updates)
+            return model_, out, opt_state_
 
         for epoch in (epoch_bar := self._epoch_pbar()):
             for callback in self.callbacks.values():
@@ -209,22 +224,28 @@ class Trainer:
 
             epoch_data: list[StepOutput] = []
             val_data: list[ValStepOutput] = []
+            opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
             for data in (step_bar := self._step_pbar(trainloader)):  # type: ignore
-                output = jax.jit(self.make_step)(self.model, data)
+                print({key: type(val) for key, val in data.items()})
+                model, output, opt_state = _update(model, data, opt_state)
                 epoch_data.append(output)
 
                 for callback in self.callbacks.values():
                     callback.on_step_end(pbar=step_bar, step_output=output)  # type: ignore
 
             if epoch % self.val_every and valloader is not None:
-                val_data.append(self._validation(epoch, valloader))  # type: ignore
+                val_data.append(
+                    self._validation(epoch, jit_fun(val_step), valloader)  # type: ignore
+                )
 
             epoch_output = EpochOutput.from_step_outputs(epoch_bar, agg_fun)  # type: ignore
             for callback in self.callbacks.values():
                 callback.on_epoch_end(
-                    model=self.model,
+                    model=model,
                     epoch=epoch,
                     pbar=epoch_bar,
                     epoch_output=epoch_output,
                     file_handler=self.file_handler,
                 )
+
+        return model

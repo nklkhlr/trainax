@@ -1,5 +1,3 @@
-from functools import partial
-
 import equinox as eqx
 import jax
 import jax.sharding as jsd
@@ -17,22 +15,11 @@ def step(model, data: dict[str, Array]) -> dict[str, Array]:
 
 
 def init_trainer(model: eqx.Module, callbacks: dict, **kwargs):
-    step_fun = partial(step, model)
-
     # TODO: default callbacks?
-    if callbacks.get("epoch") is None:
-        callbacks["epoch"] = []
-    if callbacks.get("step") is None:
-        callbacks["step"] = []
-    if callbacks.get("logger") is None:
-        callbacks["logger"] = []
-
     return Trainer(
+        model=model,
         make_step=step_fun,
-        epoch_callbacks=callbacks["epoch"],
-        step_callbacks=callbacks["step"],
-        logger_callbacks=callbacks["logger"],
-        file_handlers=[],
+        callbacks=callbacks,
         **kwargs,
     )
 

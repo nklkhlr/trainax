@@ -51,6 +51,13 @@ class JaxLoader:
         the number of samples per batch (i.e. batch_size), the last batch will
         be dropped.
         """
+        if not "x" in data:
+            raise ValueError(
+                "'data' must contain a key 'x'. This should be the main "
+                "data array and the shape along the first axis should "
+                "correspond to the number of samples."
+            )
+
         self._data = data
         self._rng = np.random.default_rng(seed or seed)
 
