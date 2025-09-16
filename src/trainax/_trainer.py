@@ -4,21 +4,26 @@ from typing import Literal
 import jax
 import jax.sharding as jsd
 import numpy as np
+from jaxtyping import Array
+from numpy.typing import NDArray
 from tqdm import tqdm, trange
 from tqdm.rich import tqdm as rich_tqdm
 from tqdm.rich import trange as rich_trange
 
+from trainax._callbacks import Callback
 from trainax._dataloader import JaxLoader
+from trainax._file_handler import FileHandler
+from trainax._types import EpochOutput, StepOutput, ValStepOutput
 
-StepFun = Callable[[dict], dict]
+StepFun = Callable[[Callable, dict[str, NDArray | Array]], StepOutput]
 
 
 class Trainer:
+    model: Callable
     make_step: StepFun
     val_step: StepFun | None
-    epoch_callbacks: dict
-    step_callbacks: dict
-    logger_callbacks: dict
+    callbacks: dict[str, Callback]
+    file_handlers: dict[str, FileHandler]
 
     n_epochs: int
     val_every: int
@@ -34,12 +39,11 @@ class Trainer:
 
     def __init__(
         self,
+        model: Callable,
         make_step: StepFun,
-        epoch_callbacks: list,
-        step_callbacks: list,
-        logger_callbacks: list,
-        file_handlers: list,
         n_epochs: int,
+        callbacks: list[Callback],
+        file_handler: FileHandler,
         val_step: StepFun | None = None,
         val_every: int = 5,
         use_rich: bool = True,
@@ -47,19 +51,12 @@ class Trainer:
         data_sharding: list[int] | int | jsd.NamedSharding | None = None,
         aggregate_steps: Literal["mean", "min", "max"] = "mean",
     ):
+        self.model = model
         self.make_step = make_step
         self.val_step = val_step
-        # TODO: unify callbacks into one list similar to torch lightning
-        self.epoch_callbacks = {
-            callback.__name__: callback for callback in epoch_callbacks
-        }
-        self.step_callbacks = {
-            callback.__name__: callback for callback in step_callbacks
-        }
-        self.logger_callbacks = {
-            callback.__name__: callback for callback in logger_callbacks
-        }
-        self.file_handlers = file_handlers
+        self.callbacks = {callback.name: callback for callback in callbacks}
+
+        self.file_handler = file_handler
         self.n_epochs = n_epochs
         self.val_every = val_every
         self.use_rich = use_rich
@@ -93,6 +90,8 @@ class Trainer:
             raise ValueError(
                 f"Invalid sharding kind: {kind}. Must be 'data' or 'model'"
             )
+        if kind == "model":
+            raise ValueError("Model sharding is not yet supported")
 
         if sharding is None:
             self._sharding[kind] = None
@@ -160,56 +159,72 @@ class Trainer:
 
     def _validation(
         self, epoch: int, valloader: JaxLoader
-    ) -> dict[str, np.ndarray]:
+    ) -> list[ValStepOutput]:
         step_results = []
-        if epoch % self.val_every == 0 and valloader is not None:
-            for data in self._step_pbar(valloader, desc="Validation"):  # type: ignore
-                step_results.append(self.val_step(data))
 
-        # TODO: turn list[dict[str, float]] into dict[str, Float[np.ndarray, ""]]
+        for callback in self.callbacks.values():
+            callback.on_val_start(epoch=epoch, loader=valloader)
+
+        if epoch % self.val_every == 0 and valloader is not None:
+            for data in self._step_pbar(valloader, desc="Validation steps"):  # type: ignore
+                # we check whether val_step is none when val data is given in
+                # `train`
+                step_results.append(jax.jit(self.val_step)(data))  # type: ignore
+
+        for callback in self.callbacks.values():
+            callback.on_val_end(epoch=epoch, data=step_results)
+
         return step_results
 
     def _prep_data(
         self, trainloader: JaxLoader, valloader: JaxLoader | None
     ) -> tuple[JaxLoader, JaxLoader | None]:
-        if (sharding := self._sharding.get("data")) is not None:
-            trainloader.set_sharding(sharding)
+        if (data_sharding := self._sharding.get("data")) is not None:
+            trainloader.set_sharding(data_sharding)
             if valloader is not None:
-                valloader.set_sharding(sharding)
+                valloader.set_sharding(data_sharding)
+
+        # TODO: add in model sharding on self.model
 
         return trainloader, valloader
 
     def train(self, trainloader: JaxLoader, valloader: JaxLoader | None):
         agg_fun = self._agg_funs[self._aggregate_steps]
-        if valloader is not None:
-            if self.val_step is None:
-                raise ValueError(
-                    "'valloader' provided but val_step is not defined. "
-                    "Please set the validation step function "
-                    "(Trainer.val_step)."
-                )
+        if valloader is not None and self.val_step is None:
+            raise ValueError(
+                "'valloader' provided but val_step is not defined. "
+                "Please set the validation step function "
+                "(Trainer.val_step)."
+            )
 
-            def val_func(epoch: int, valloader: JaxLoader) -> dict[str, float]:  # type: ignore
-                val_metrics = self._validation(epoch, valloader)
-                # TODO: aggregate over each entry in val_metrics
-                return {
-                    key: agg_fun(metric) for key, metric in val_metrics.items()
-                }
-        else:
-
-            def val_func(*args, **kwargs):
-                pass
+        self._prep_data(trainloader, valloader)
 
         for epoch in (epoch_bar := self._epoch_pbar()):
-            epoch_data = []
+            for callback in self.callbacks.values():
+                callback.on_epoch_start(
+                    epoch=epoch,
+                    pbar=epoch_bar,
+                    file_handler=self.file_handler,
+                )
+
+            epoch_data: list[StepOutput] = []
+            val_data: list[ValStepOutput] = []
             for data in (step_bar := self._step_pbar(trainloader)):  # type: ignore
-                output = self.make_step(data)
+                output = jax.jit(self.make_step)(self.model, data)
                 epoch_data.append(output)
-                for callback in self.step_callbacks.values():
-                    callback(pbar=step_bar, output=output)
 
-            for callback in self.epoch_callbacks.values():
-                callback(epoch=epoch, data=epoch_data, pbar=epoch_bar)
+                for callback in self.callbacks.values():
+                    callback.on_step_end(pbar=step_bar, step_output=output)  # type: ignore
 
-            for callback in self.logger_callbacks.values():
-                callback(epoch=epoch, callbacks=self.epoch_callbacks)
+            if epoch % self.val_every and valloader is not None:
+                val_data.append(self._validation(epoch, valloader))  # type: ignore
+
+            epoch_output = EpochOutput.from_step_outputs(epoch_bar, agg_fun)  # type: ignore
+            for callback in self.callbacks.values():
+                callback.on_epoch_end(
+                    model=self.model,
+                    epoch=epoch,
+                    pbar=epoch_bar,
+                    epoch_output=epoch_output,
+                    file_handler=self.file_handler,
+                )

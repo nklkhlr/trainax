@@ -15,8 +15,7 @@ class FileHandler:
     def files(self):
         return self._files
 
-    @files.setter
-    def files(self, files):
+    def set_files(self, files):
         if self._open_files:
             raise RuntimeError("Cannot change file list from inside context")
         self._files = files
@@ -29,16 +28,28 @@ class FileHandler:
     def get_file_path(self, key: str):
         return self._files[key]
 
-    def __enter__(self):
+    def open(self):
         self._open_files = {
-            fkey: open(file, "w") for fkey, file in self._files.items()
+            fkey: open(file, "w")
+            for fkey, file in self._files.items()  # type: ignore
         }
-        return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def close(self):
+        # TODO: how to ensure that all files are closed on deletion/crash
+        # => "safe context"
         for file in self._open_files.values():
             file.close()
         self._open_files = {}
+
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def __del__(self):
+        self.close()
 
     def __getitem__(self, key):
         try:
