@@ -6,8 +6,11 @@ dist/
 wheels/
 *.egg-info
 
+# testing
+.coverage*
+
 # Virtual environments
 .venv
 
-#
+# jet brains
 .idea
