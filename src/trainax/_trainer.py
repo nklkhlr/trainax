@@ -1,9 +1,11 @@
 from collections.abc import Callable
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 import jax.sharding as jsd
+import jax.tree_util as jtu
 import numpy as np
 from jaxtyping import Array, PyTree
 from numpy.typing import NDArray
@@ -17,7 +19,10 @@ from trainax._dataloader import JaxLoader
 from trainax._file_handler import FileHandler
 from trainax._types import EpochOutput, PathLike, StepOutput, ValStepOutput
 
-StepFun = Callable[[Callable, dict[str, NDArray | Array]], StepOutput]
+StepFun = Callable[
+    [Callable[..., Any], dict[str, NDArray | Array], PyTree | None],
+    StepOutput,
+]
 
 
 class Trainer:
@@ -151,23 +156,32 @@ class Trainer:
         return loader
 
     def _validation(
-        self, epoch: int, val_step: StepFun, valloader: JaxLoader
-    ) -> list[ValStepOutput]:
-        step_results = []
+        self,
+        epoch: int,
+        model: Callable[..., Any],
+        val_step: StepFun,
+        valloader: JaxLoader,
+        val_state: PyTree | None,
+    ) -> tuple[list[ValStepOutput], PyTree | None]:
+        step_results: list[ValStepOutput] = []
 
         for callback in self.callbacks.values():
             callback.on_val_start(epoch=epoch, loader=valloader)
 
-        if epoch % self.val_every == 0 and valloader is not None:
-            for data in self._step_pbar(valloader, desc="Validation steps"):  # type: ignore
-                # we check whether val_step is none when val data is given in
-                # `train`
-                step_results.append(val_step(data))  # type: ignore
+        if (epoch + 1) % self.val_every == 0 and valloader is not None:
+            for data in self._step_pbar(  # type: ignore[arg-type]
+                valloader, desc="Validation steps", leave=False
+            ):
+                state_input = self._clone_state(val_state)
+                output = val_step(model, data, state_input)
+                step_results.append(output)  # type: ignore[arg-type]
+                if output.state is not None:
+                    val_state = self._clone_state(output.state)
 
         for callback in self.callbacks.values():
             callback.on_val_end(epoch=epoch, data=step_results)
 
-        return step_results
+        return step_results, val_state
 
     def _prep_data(
         self, trainloader: JaxLoader, valloader: JaxLoader | None
@@ -181,21 +195,37 @@ class Trainer:
 
         return trainloader, valloader
 
-    def update(self, model, optim: GradientTransformation, grads: PyTree, opt_state: PyTree):
-        updates, opt_state = optim.update(grads, opt_state)
-        # TODO: option to apply updates with other libraries
-        model = eqx.apply_updates(model, updates)
+    @staticmethod
+    def _clone_state(state: PyTree | None) -> PyTree | None:
+        if state is None:
+            return None
+
+        def _clone_leaf(leaf):
+            if isinstance(leaf, jax.Array):
+                return jnp.array(leaf, copy=True)
+            if isinstance(leaf, np.ndarray):
+                return np.array(leaf, copy=True)
+            return leaf
+
+        leaves, treedef = jtu.tree_flatten(state)
+        cloned_leaves = [_clone_leaf(leaf) for leaf in leaves]
+        return jtu.tree_unflatten(treedef, cloned_leaves)
 
     def train(
         self,
-        model: Callable,
+        model: Callable[..., Any],
         optim: GradientTransformation,
         train_step: StepFun,
         trainloader: JaxLoader,
         val_step: StepFun | None,
         valloader: JaxLoader | None,
-        jit_fun: Callable = eqx.filter_jit,
-    ) -> Callable:
+        train_state: PyTree | None = None,
+        val_state: PyTree | None = None,
+        jit_fun: Callable[
+            [Callable[..., Any]],
+            Callable[..., Any],
+        ] = eqx.filter_jit,
+    ) -> tuple[Callable[..., Any], PyTree | None]:
         agg_fun = self._agg_funs[self._aggregate_steps]
         if valloader is not None and val_step is None:
             raise ValueError(
@@ -204,15 +234,37 @@ class Trainer:
                 "(Trainer.val_step)."
             )
 
-        self._prep_data(trainloader, valloader)
+        trainloader, valloader = self._prep_data(trainloader, valloader)
 
-        @jit_fun
-        def _update(model_, data_, opt_state_):
-            out = train_step(model_, data_)
-            jax.debug.print("step taken")
-            updates, opt_state_ = optim.update(out.gradients, opt_state_)
-            model_ = eqx.apply_updates(model_, updates)
-            return model_, out, opt_state_
+        def _update(
+            model_: Callable[..., Any],
+            data_: dict[str, NDArray | Array],
+            opt_state_: PyTree,
+            state_: PyTree | None,
+        ):
+            state_input = self._clone_state(state_)
+            out = train_step(model_, data_, state_input)
+            if out.gradients is None:
+                raise ValueError(
+                    "train_step must return gradients to apply optimizer "
+                    "updates."
+                )
+            updates, opt_state_new = optim.update(out.gradients, opt_state_)
+            model_new = eqx.apply_updates(model_, updates)
+            state_new = (
+                self._clone_state(out.state)
+                if out.state is not None
+                else state_
+            )
+            return model_new, out, opt_state_new, state_new
+
+        update_fun = jit_fun(_update)
+        opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
+        state = train_state
+
+        val_step_fun: StepFun | None = None
+        if valloader is not None and val_step is not None:
+            val_step_fun = jit_fun(val_step)
 
         for epoch in (epoch_bar := self._epoch_pbar()):
             for callback in self.callbacks.values():
@@ -223,22 +275,36 @@ class Trainer:
                 )
 
             epoch_data: list[StepOutput] = []
-            val_data: list[ValStepOutput] = []
-            opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
-            for data in (step_bar := self._step_pbar(trainloader)):  # type: ignore
-                print({key: type(val) for key, val in data.items()})
-                model, output, opt_state = _update(model, data, opt_state)
+            step_bar = self._step_pbar(trainloader)  # type: ignore[arg-type]
+            for data in step_bar:
+                model, output, opt_state, state = update_fun(
+                    model, data, opt_state, state
+                )
                 epoch_data.append(output)
 
                 for callback in self.callbacks.values():
-                    callback.on_step_end(pbar=step_bar, step_output=output)  # type: ignore
+                    callback.on_step_end(
+                        pbar=step_bar,
+                        step_output=output,
+                    )
 
-            if epoch % self.val_every and valloader is not None:
-                val_data.append(
-                    self._validation(epoch, jit_fun(val_step), valloader)  # type: ignore
+            val_outputs: list[ValStepOutput] | None = None
+            if valloader is not None and val_step_fun is not None:
+                val_outputs, val_state = self._validation(
+                    epoch=epoch,
+                    model=model,
+                    val_step=val_step_fun,
+                    valloader=valloader,
+                    val_state=val_state,
                 )
+                if not val_outputs:
+                    val_outputs = None
 
-            epoch_output = EpochOutput.from_step_outputs(epoch_bar, agg_fun)  # type: ignore
+            epoch_output = EpochOutput.from_step_outputs(
+                epoch_data,
+                agg_fun,
+                val_outputs,
+            )
             for callback in self.callbacks.values():
                 callback.on_epoch_end(
                     model=model,
@@ -248,4 +314,4 @@ class Trainer:
                     file_handler=self.file_handler,
                 )
 
-        return model
+        return model, state

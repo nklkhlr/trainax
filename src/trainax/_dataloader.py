@@ -51,7 +51,7 @@ class JaxLoader:
         the number of samples per batch (i.e. batch_size), the last batch will
         be dropped.
         """
-        if not "x" in data:
+        if "x" not in data:
             raise ValueError(
                 "'data' must contain a key 'x'. This should be the main "
                 "data array and the shape along the first axis should "
@@ -239,6 +239,7 @@ class JaxLoader:
 
 class SingleBatchJaxLoader(JaxLoader):
     _points_per_shard: int
+    _n_batches: int = 1
 
     def __init__(
         self,
