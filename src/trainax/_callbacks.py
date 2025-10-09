@@ -11,17 +11,22 @@ from trainax._types import EpochOutput, StepOutput
 
 
 def _train_loss_msg(epoch_output: EpochOutput) -> str:
+    """Format the training loss for human-readable logging."""
     return f"train loss={epoch_output.train_loss:.4E}"
 
 
 class Callback:
+    """Minimal base class for Trainax callbacks."""
+
     name: str
 
     def __init__(self, name: str):
+        """Assign a unique `name` used for registry lookups."""
         self.name = name
 
     # TODO: define interfaces for missing methods
     def on_epoch_start(self, *args, **kwargs):
+        """Execute callback at the beginning of each epoch."""
         pass
 
     def on_epoch_end(
@@ -32,19 +37,25 @@ class Callback:
         epoch_output: EpochOutput,
         file_handler: FileHandler,
     ):
+        """Execute callback after each epoch with aggregated results."""
         pass
 
     def on_step_end(self, pbar: tqdm, step_output: StepOutput):
+        """Execute callback after each training step."""
         pass
 
     def on_val_start(self, *args, **kwargs):
+        """Execute callback before validation begins."""
         pass
 
     def on_val_end(self, *args, **kwargs):
+        """Execute callback after validation completes."""
         pass
 
 
 class EpochLogger(Callback):
+    """Log training/validation summaries through to console/file."""
+
     logger: logging.Logger
     _val_message: Callable[[EpochOutput], str]
     _last_val_loss: float
@@ -80,6 +91,7 @@ class EpochLogger(Callback):
         epoch_output: EpochOutput,
         file_handler: FileHandler,
     ):
+        """Log the outcome of an epoch via the configured logger."""
         msg = f"Epoch {epoch}: "
         self.logger.info(
             msg
@@ -89,6 +101,8 @@ class EpochLogger(Callback):
 
 
 class PbarHandler(Callback):
+    """Handle updates on `tqdm` progress bars."""
+
     _val_message: Callable[[EpochOutput], str]
     _last_val_loss: float
 
@@ -114,11 +128,14 @@ class PbarHandler(Callback):
         epoch_output: EpochOutput,
         file_handler: FileHandler,
     ):
+        """Update the progress bar with the latest loss statistics."""
         msg = _train_loss_msg(epoch_output) + self._val_message(epoch_output)
         pbar.set_postfix_str(f"[{msg}]")
 
 
 class LossMetricTracker(Callback):
+    """Write loss/metric values to disk and mirror them in memory."""
+
     losses: dict[str, list[float]]
     _keys: dict[str, str]
 
@@ -142,6 +159,7 @@ class LossMetricTracker(Callback):
     def _write_loss(
         file: TextIO, loss: Float | tuple[Int, Float] | list[Int | Float]
     ):
+        """Normalize loss formats and write them to disk."""
         if isinstance(loss, float):
             file.write(f"{loss}\n")
         elif isinstance(loss, tuple):
@@ -160,6 +178,7 @@ class LossMetricTracker(Callback):
         epoch_output: EpochOutput,
         file_handler: FileHandler,
     ):
+        """Write losses/metrics to disk and cache them in memory."""
         self._write_loss(
             file_handler[self._keys["train_loss"]], epoch_output.train_loss
         )
@@ -177,6 +196,8 @@ class LossMetricTracker(Callback):
 
 
 class BestModelSaver(Callback):
+    """Checkpoint best model."""
+
     save_model: Callable[..., Any]
     _key: str
     _best_val: float
@@ -223,9 +244,14 @@ class BestModelSaver(Callback):
         return self._key
 
     def set_key(self, key: str):
+        """Change the metric key used to evaluate model quality."""
         match key:
             case "val_loss":
-                self._get_val = lambda epoch_output: epoch_output.val_loss  # type: ignore
+
+                def _val_loss(epoch_output: EpochOutput):
+                    return epoch_output.val_loss  # type: ignore[return-value]
+
+                self._get_val = _val_loss  # type: ignore
             case "train_loss":
                 self._get_val = lambda epoch_output: epoch_output.train_loss
             case _:
@@ -257,6 +283,7 @@ class BestModelSaver(Callback):
         epoch_output: EpochOutput,
         file_handler: FileHandler,
     ):
+        """Evaluate the metric and optionally trigger a model save."""
         new_val = self._get_val(epoch_output)
         try:
             if self._criterion(new_val, self._best_val):
