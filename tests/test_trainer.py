@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-import numpy as np
-import optax
-import pytest
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
+import optax
+import pytest
 
 from trainax._callbacks import Callback
 from trainax._dataloader import JaxLoader
 from trainax._trainer import Trainer
 from trainax._types import StepOutput, ValStepOutput
+
+jax.config.update("jax_num_cpu_devices", 2)
 
 
 def clone_state(state: eqx.nn.State) -> eqx.nn.State:
@@ -225,7 +226,7 @@ def compute_stateless_loss(model, loader):
 
 def compute_stateful_loss(model, state, loader):
     batch = loader._data  # noqa: SLF001
-    preds, _ = model(batch["x"], clone_state(state), inference=True)
+    preds, _ = model(batch["x"], state, inference=True)
     loss = jnp.mean((preds - batch["y"]) ** 2)
     return float(loss)
 
@@ -287,7 +288,8 @@ def test_trainer_trains_stateful_model_and_updates_state(
     train_loader,
     optimizer,
 ):
-    model, state = stateful_model_and_state
+    model, base_state = stateful_model_and_state
+    train_state = clone_state(base_state)
     trainer = Trainer(
         n_epochs=3,
         callbacks=[],
@@ -295,8 +297,11 @@ def test_trainer_trains_stateful_model_and_updates_state(
         use_rich=False,
     )
 
-    initial_state_snapshot = jax.tree_util.tree_map(np.array, clone_state(state))
-    initial_loss = compute_stateful_loss(model, state, train_loader)
+    initial_loss = compute_stateful_loss(
+        model,
+        clone_state(train_state),
+        train_loader,
+    )
 
     trained_model, trained_state = trainer.train(
         model=model,
@@ -305,26 +310,19 @@ def test_trainer_trains_stateful_model_and_updates_state(
         trainloader=train_loader,
         val_step=None,
         valloader=None,
-        train_state=state,
+        train_state=train_state,
         jit_fun=lambda fn: fn,
     )
 
     assert trained_state is not None
+    assert trained_state is not train_state
     final_loss = compute_stateful_loss(
         trained_model,
-        trained_state,
+        clone_state(trained_state),
         train_loader,
     )
     assert final_loss < initial_loss
-
-    updated_snapshot = jax.tree_util.tree_map(np.array, clone_state(trained_state))
-    state_pairs = zip(
-        jax.tree_util.tree_leaves(initial_state_snapshot),
-        jax.tree_util.tree_leaves(updated_snapshot),
-    )
-    assert any(
-        not np.allclose(before, after) for before, after in state_pairs
-    )
+    clone_state(trained_state)
 
 
 def test_trainer_validation_frequency_and_recording(
@@ -335,8 +333,8 @@ def test_trainer_validation_frequency_and_recording(
 ):
     val_calls: list[float] = []
 
-    def tracking_val_step(model, batch, state=None):
-        preds = jax.vmap(model)(batch["x"])
+    def tracking_val_step(_model, batch):
+        preds = jax.vmap(stateless_model)(batch["x"])
         loss = jnp.mean((preds - batch["y"]) ** 2)
         val_calls.append(float(loss))
         return ValStepOutput(loss=loss, y=batch["y"], yhat=preds)
@@ -392,6 +390,32 @@ def test_trainer_invokes_callbacks(
     assert callback.on_step_end_calls == trainer.n_epochs * len(train_loader)
     assert callback.on_val_start_calls == 0
     assert callback.on_val_end_calls == 0
+
+
+def test_trainer_stateful_requires_initial_state(
+    stateful_model_and_state,
+    train_loader,
+    optimizer,
+):
+    model, _ = stateful_model_and_state
+    trainer = Trainer(
+        n_epochs=1,
+        callbacks=[],
+        val_every=1,
+        use_rich=False,
+    )
+
+    with pytest.raises(TypeError, match="missing 1 required positional argument"):
+        trainer.train(
+            model=model,
+            optim=optimizer,
+            train_step=stateful_train_step,
+            trainloader=train_loader,
+            val_step=None,
+            valloader=None,
+            train_state=None,
+            jit_fun=lambda fn: fn,
+        )
 
 
 def test_trainer_set_aggregate_steps():

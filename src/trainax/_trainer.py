@@ -20,12 +20,34 @@ from trainax._file_handler import FileHandler
 from trainax._types import EpochOutput, PathLike, StepOutput, ValStepOutput
 
 StepFun = Callable[
-    [Callable[..., Any], dict[str, NDArray | Array], PyTree | None],
+    [Callable[..., Any], dict[str, NDArray | Array]],
+    StepOutput,
+]
+StateStepFun = Callable[
+    [Callable[..., Any], dict[str, NDArray | Array], PyTree],
     StepOutput,
 ]
 
 
 class Trainer:
+    """Main training handler.
+
+    Deals with training, validation, and callback handling.
+
+    Attributes
+    ----------
+    callbacks : dict[str, Callback]
+        Mapping of callback names to callback instances.
+    file_handlers : dict[str, FileHandler]
+        Mapping of callback names to file handlers.
+    n_epochs : int
+        Number of epochs to iterate through.
+    val_every : int
+        Frequency (in epochs) for running validation steps.
+    use_rich : bool
+        Enable rich progress bars when available.
+    """
+
     callbacks: dict[str, Callback]
     file_handlers: dict[str, FileHandler]
 
@@ -52,6 +74,30 @@ class Trainer:
         data_sharding: list[int] | int | jsd.NamedSharding | None = None,
         aggregate_steps: Literal["mean", "min", "max"] = "mean",
     ):
+        """Initialise a trainer instance.
+
+        Parameters
+        ----------
+        n_epochs : int
+            Number of epochs to iterate through.
+        callbacks : list[Callback]
+            Callback instances for logging, checkpointing, etc.
+        continuous_files : dict[str, PathLike], optional
+            Mapping of callback keys to open file paths managed by
+            :class:`~trainax._file_handler.FileHandler`.
+        val_every : int, default=5
+            Frequency (in epochs) for running validation steps.
+        use_rich : bool, default=True
+            Enable rich progress bars when available.
+        model_sharding : list[int] | int | jsd.NamedSharding | None, optional
+            Placeholder for future model sharding support. Any non-``None``
+            value currently raises an Exception.
+        data_sharding : list[int] | int | jsd.NamedSharding | None, optional
+            Sharding applied to provided data loaders.
+        aggregate_steps : {"mean", "min", "max"}, default="mean"
+            Aggregation strategy used when reducing batch metrics to epoch
+            summaries.
+        """
         self.callbacks = {callback.name: callback for callback in callbacks}
 
         self.file_handler = FileHandler(continuous_files or {})
@@ -67,11 +113,13 @@ class Trainer:
 
     @property
     def aggregate_steps(self):
+        """str: Aggregation strategy applied to per-step metrics."""
         return self._aggregate_steps
 
     def set_aggregate_steps(
         self, aggregate_steps: Literal["mean", "min", "max"]
     ):
+        """Override the aggregation strategy used in epoch summaries."""
         if aggregate_steps not in self._agg_funs:
             raise ValueError(
                 f"Invalid aggregate_steps: {aggregate_steps}. "
@@ -89,7 +137,7 @@ class Trainer:
                 f"Invalid sharding kind: {kind}. Must be 'data' or 'model'"
             )
         if kind == "model" and sharding is not None:
-            raise ValueError("Model sharding is not yet supported")
+            raise NotImplementedError("Model sharding is not yet supported")
 
         if sharding is None:
             self._sharding[kind] = None
@@ -116,9 +164,11 @@ class Trainer:
     def sharding(
         self,
     ) -> dict[str, jsd.NamedSharding | jsd.SingleDeviceSharding | None]:
+        """dict[str, Sharding | None]: Current data/model sharding settings."""
         return self._sharding
 
     def set_sharding(self, sharding, kind: Literal["data", "model"]):
+        """Set data/model sharding."""
         # TODO: note that if sharding is int or list[int] only single dimension
         # sharding is supported
         self._set_sharding(sharding, kind)
@@ -161,8 +211,7 @@ class Trainer:
         model: Callable[..., Any],
         val_step: StepFun,
         valloader: JaxLoader,
-        val_state: PyTree | None,
-    ) -> tuple[list[ValStepOutput], PyTree | None]:
+    ) -> list[ValStepOutput]:
         step_results: list[ValStepOutput] = []
 
         for callback in self.callbacks.values():
@@ -172,16 +221,13 @@ class Trainer:
             for data in self._step_pbar(  # type: ignore[arg-type]
                 valloader, desc="Validation steps", leave=False
             ):
-                state_input = self._clone_state(val_state)
-                output = val_step(model, data, state_input)
+                output = val_step(model, data)
                 step_results.append(output)  # type: ignore[arg-type]
-                if output.state is not None:
-                    val_state = self._clone_state(output.state)
 
         for callback in self.callbacks.values():
             callback.on_val_end(epoch=epoch, data=step_results)
 
-        return step_results, val_state
+        return step_results
 
     def _prep_data(
         self, trainloader: JaxLoader, valloader: JaxLoader | None
@@ -197,6 +243,7 @@ class Trainer:
 
     @staticmethod
     def _clone_state(state: PyTree | None) -> PyTree | None:
+        """Create a deep copy of mutable state trees to avoid reuse errors."""
         if state is None:
             return None
 
@@ -211,21 +258,81 @@ class Trainer:
         cloned_leaves = [_clone_leaf(leaf) for leaf in leaves]
         return jtu.tree_unflatten(treedef, cloned_leaves)
 
+    @staticmethod
+    def _jit_val_step(
+        jit_fun: Callable[
+            [Callable[..., Any]],
+            Callable[..., Any],
+        ],
+        valloader: JaxLoader | None,
+        val_step: StateStepFun | StepFun | None,
+    ) -> StateStepFun | StepFun | None:
+        if valloader is not None:
+            if val_step is not None:
+                return jit_fun(val_step)
+            raise ValueError(
+                "Validation loader provided but val_step is not defined. "
+                "Please set the validation step function "
+                "(Trainer.val_step)."
+            )
+        if val_step is not None:
+            raise ValueError(
+                "Validation step provided but valloader is not defined. "
+                "Please pass a validation loader."
+            )
+
+        return None
+
+    def _invoke_callbacks(
+        self,
+        event: Literal["epoch_start", "epoch_end", "step_start", "step_end"],
+        **kwargs,
+    ):
+        for callback in self.callbacks.values():
+            getattr(callback, "on_" + event)(**kwargs)
+
     def train(
         self,
         model: Callable[..., Any],
         optim: GradientTransformation,
-        train_step: StepFun,
+        train_step: StateStepFun | StepFun,
         trainloader: JaxLoader,
         val_step: StepFun | None,
         valloader: JaxLoader | None,
         train_state: PyTree | None = None,
-        val_state: PyTree | None = None,
         jit_fun: Callable[
             [Callable[..., Any]],
             Callable[..., Any],
         ] = eqx.filter_jit,
     ) -> tuple[Callable[..., Any], PyTree | None]:
+        """Execute the training loop and return the updated model/state.
+
+        Parameters
+        ----------
+        model : Callable[..., Any]
+            Trainable function or module.
+        optim : optax.GradientTransformation
+            Optimiser providing ``init`` and ``update``.
+        train_step : StepFun | StateStepFun
+            Callable that computes loss, gradients, and optional state updates.
+            Signature should match whether the function is stateful or not.
+        trainloader : JaxLoader
+            Loader iterating over training batches.
+        val_step : StepFun | None
+            Optional validation function invoked according to ``val_every``.
+            Signature should match whether the function is stateful or not.
+        valloader : JaxLoader | None
+            Validation loader yielding batches; ignored when ``None``.
+        train_state : PyTree | None, optional
+            Initial mutable state (e.g. BatchNorm statistics) for training.
+        jit_fun : Callable, optional
+            Transformation used to JIT the update/validation functions.
+
+        Returns
+        -------
+        tuple[Callable[..., Any], PyTree | None]
+            The updated model and final training state (if present).
+        """
         agg_fun = self._agg_funs[self._aggregate_steps]
         if valloader is not None and val_step is None:
             raise ValueError(
@@ -242,8 +349,12 @@ class Trainer:
             opt_state_: PyTree,
             state_: PyTree | None,
         ):
-            state_input = self._clone_state(state_)
-            out = train_step(model_, data_, state_input)
+            if state_ is None:
+                out = train_step(model_, data_)  # type: ignore
+            else:
+                state_input = self._clone_state(state_)
+                out = train_step(model_, data_, state_input)  # type: ignore
+
             if out.gradients is None:
                 raise ValueError(
                     "train_step must return gradients to apply optimizer "
@@ -262,40 +373,41 @@ class Trainer:
         opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
         state = train_state
 
-        val_step_fun: StepFun | None = None
-        if valloader is not None and val_step is not None:
-            val_step_fun = jit_fun(val_step)
-
+        val_step_fun = self._jit_val_step(jit_fun, valloader, val_step)
         for epoch in (epoch_bar := self._epoch_pbar()):
-            for callback in self.callbacks.values():
-                callback.on_epoch_start(
-                    epoch=epoch,
-                    pbar=epoch_bar,
-                    file_handler=self.file_handler,
-                )
+            self._invoke_callbacks(
+                event="epoch_start",
+                epoch=epoch,
+                pbar=epoch_bar,
+                file_handler=self.file_handler,
+            )
 
             epoch_data: list[StepOutput] = []
-            step_bar = self._step_pbar(trainloader)  # type: ignore[arg-type]
+            step_bar = self._step_pbar(trainloader)  # type: ignore
             for data in step_bar:
                 model, output, opt_state, state = update_fun(
                     model, data, opt_state, state
                 )
                 epoch_data.append(output)
 
-                for callback in self.callbacks.values():
-                    callback.on_step_end(
-                        pbar=step_bar,
-                        step_output=output,
-                    )
+                self._invoke_callbacks(
+                    event="step_end",
+                    pbar=step_bar,
+                    step_output=output,
+                )
 
             val_outputs: list[ValStepOutput] | None = None
-            if valloader is not None and val_step_fun is not None:
-                val_outputs, val_state = self._validation(
+            if val_step_fun is not None:
+                inference_model = eqx.nn.inference_mode(model)
+                inference_model = eqx.Partial(
+                    inference_model, state=train_state
+                )
+
+                val_outputs = self._validation(
                     epoch=epoch,
-                    model=model,
+                    model=inference_model,
                     val_step=val_step_fun,
-                    valloader=valloader,
-                    val_state=val_state,
+                    valloader=valloader,  # type: ignore
                 )
                 if not val_outputs:
                     val_outputs = None
@@ -305,13 +417,13 @@ class Trainer:
                 agg_fun,
                 val_outputs,
             )
-            for callback in self.callbacks.values():
-                callback.on_epoch_end(
-                    model=model,
-                    epoch=epoch,
-                    pbar=epoch_bar,
-                    epoch_output=epoch_output,
-                    file_handler=self.file_handler,
-                )
+            self._invoke_callbacks(
+                event="epoch_end",
+                model=model,
+                epoch=epoch,
+                pbar=epoch_bar,
+                epoch_output=epoch_output,
+                file_handler=self.file_handler,
+            )
 
         return model, state
