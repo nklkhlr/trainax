@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 
 class JaxLoader:
-    """JaxLoader is a class for loading data in batches.
+    """Lightweight data loading utilities in pure numpy/jax.
 
     Data is stored as and provided a dictionary of jax/numpy arrays
     """
@@ -30,8 +30,7 @@ class JaxLoader:
         seed: int = 42,
     ):
         # TODO: type checks for data and batch_size
-        """
-        Initialize JaxLoader with data, batch size, sharding, and random seed.
+        """Initialize a new JaxLoader instance.
 
         Parameters
         ----------
@@ -116,6 +115,15 @@ class JaxLoader:
         return self._batch_size
 
     def set_batch_size(self, batch_size: int):
+        """Set a new batch size for the loader.
+
+        Parameters
+        ----------
+        batch_size : int
+            Desired number of samples per batch. Values larger than the dataset
+            size are clipped to the dataset length, while non-divisible sizes
+            trigger a warning and drop the remainder each epoch.
+        """
         self._set_batch_size(batch_size)
 
     @property
@@ -186,18 +194,33 @@ class JaxLoader:
         }
 
     def __getitem__(self, idx: int | slice) -> dict[str, Array | NDArray]:
+        """Return raw data by index or slice without shuffling.
+
+        Parameters
+        ----------
+        idx : int | slice
+            Index or slice to extract along the batch axis.
+
+        Returns
+        -------
+        dict[str, Array | NDArray]
+            Dictionary mapping feature names to array slices.
+        """
         return {key: arr[idx, ...] for key, arr in self._data.items()}
 
     def __iter__(self) -> Generator[dict[str, Array | NDArray]]:
+        """Iterate over shuffled batches for the current configuration."""
         indices = np.arange(self.n_points)
         self._rng.shuffle(indices)
         for idx in range(self._n_batches):
             yield self._batch_func(indices, idx)
 
     def __len__(self) -> int:
+        """Return the number of batches produced per epoch."""
         return self._n_batches
 
     def __repr__(self) -> str:
+        """Return a concise summary of the loader configuration."""
         data_keys = ", ".join(list(self._data.keys()))
         if self._sharding is None:
             sharding_note = "No sharding"
@@ -217,17 +240,20 @@ class JaxLoader:
         )
 
     def flatten_with_keys(self):
+        """Return pytree metadata for registration with `jax.tree_util`."""
         children = [jtu.GetAttrKey("_data"), self._data]
         aux_data = (self._batch_size, self._sharding, self._rng)
         return children, aux_data
 
     def flatten(self):
+        """Return pytree children/aux data without attribute keys."""
         children = [self._data]
         aux_data = (self._batch_size, self._sharding, self._rng)
         return children, aux_data
 
     @classmethod
     def unflatten(cls, aux_data, children):
+        """Reconstruct a loader instance from pytree children."""
         new = cls(
             data=children[0],
             batch_size=aux_data[0],
@@ -238,6 +264,8 @@ class JaxLoader:
 
 
 class SingleBatchJaxLoader(JaxLoader):
+    """JaxLoader for datasets with a single batch."""
+
     _points_per_shard: int
     _n_batches: int = 1
 
@@ -250,6 +278,7 @@ class SingleBatchJaxLoader(JaxLoader):
         super().__init__(data=data, batch_size=1, sharding=sharding, seed=seed)
 
     def _set_batch_size(self, batch_size):
+        """Force the internal batch size to match the dataset length."""
         if batch_size != 1:
             warnings.warn(
                 "Batch size must be 1 for SingleBatchJaxLoader",
@@ -295,17 +324,20 @@ class SingleBatchJaxLoader(JaxLoader):
         return 1
 
     def flatten_with_keys(self):  # pyright: ignore
+        """Return pytree representation with attribute keys."""
         children = (jtu.GetAttrKey("_data"), self._data)
         aux_data = (self._sharding, self._rng, self._points_per_shard)
         return children, aux_data
 
     def flatten(self):  # pyright: ignore
+        """Return pytree representation without attribute keys."""
         children = self._data
         aux_data = (self._sharding, self._rng, self._points_per_shard)
         return children, aux_data
 
     @classmethod
     def unflatten(cls, aux_data, children):
+        """Reconstruct a single-batch loader from pytree children."""
         new = cls(
             data=children[0],
             sharding=aux_data[0],
