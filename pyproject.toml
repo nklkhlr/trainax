@@ -8,7 +8,9 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "jax==0.6.2",
+    "equinox>=0.13.0",
+    # currently jax >= 0.7.0 does not work with equinox
+    "jax<=0.6.2",
     "jaxtyping>=0.3.2",
     "optax>=0.2.6",
     "rich>=14.1.0",
@@ -113,8 +115,8 @@ directory = "coverage/html"
 [dependency-groups]
 dev = [
     "debugpy>=1.8.16",
-    "equinox>=0.13.0",
     "jupyter>=1.1.1",
+    "matplotlib>=3.10.7",
     "pytest-cov>=6.2.1",
     "ruff>=0.12.10",
 ]
