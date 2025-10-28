@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
-import numpy as np
-import optax
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
+import optax
 
 from trainax._callbacks import Callback
 from trainax._dataloader import JaxLoader
@@ -25,9 +24,7 @@ class TrackingCallback(Callback):
         self.epochs.append(epoch)
         self.train_losses.append(float(epoch_output.train_loss))
         val_loss = epoch_output.val_loss
-        self.val_losses.append(
-            None if val_loss is None else float(val_loss)
-        )
+        self.val_losses.append(None if val_loss is None else float(val_loss))
 
 
 class StatefulNet(eqx.Module):
@@ -39,39 +36,34 @@ class StatefulNet(eqx.Module):
         self.linear = eqx.nn.Linear(in_size, out_size, key=key_linear)
         self.norm = eqx.nn.BatchNorm(
             input_size=out_size,
-            axis_name=(),
+            axis_name=("batch",),
             inference=False,
             mode="batch",
         )
 
     def __call__(
-        self,
-        inputs: jax.Array,
-        state: eqx.nn.State,
-        *,
-        inference: bool = False,
+        self, inputs: jax.Array, state: eqx.nn.State, *args, **kwargs
     ) -> tuple[jax.Array, eqx.nn.State]:
-        norm_state = state.substate(self.norm)
-        norm_in = jnp.swapaxes(inputs, 0, 1)
-        linear_out = self.linear(norm_in)
-        norm_out, updated_norm_state = self.norm(
+        linear_out = self.linear(inputs)
+        outputs, state = self.norm(
             linear_out,
-            norm_state,
-            inference=inference,
+            state,
         )
-        outputs = jnp.swapaxes(norm_out, 0, 1)
-        updated_state = state.update(updated_norm_state)
-        return outputs, updated_state
+        return outputs, state
 
 
-def stateless_train_step(model: eqx.Module, batch, state=None) -> StepOutput:
-    def loss_fn(m: eqx.Module):
-        preds = jax.vmap(m)(batch["x"])
-        loss = jnp.mean((preds - batch["y"]) ** 2)
+def loss_fn(yhat, y):
+    return jnp.mean((yhat - y) ** 2)
+
+
+def stateless_train_step(model: eqx.Module, batch) -> StepOutput:
+    def _step(m: eqx.Module):
+        preds = jax.vmap(m, axis_name="batch")(batch["x"])
+        loss = loss_fn(preds, batch["y"])
         return loss, preds
 
     (loss, preds), grads = eqx.filter_value_and_grad(
-        loss_fn,
+        _step,
         has_aux=True,
     )(model)
     return StepOutput(
@@ -82,9 +74,13 @@ def stateless_train_step(model: eqx.Module, batch, state=None) -> StepOutput:
     )
 
 
-def stateless_val_step(model: eqx.Module, batch, state=None) -> ValStepOutput:
-    preds = jax.vmap(model)(batch["x"])
-    loss = jnp.mean((preds - batch["y"]) ** 2)
+def val_step(model: eqx.Module, batch) -> ValStepOutput:
+    preds = jax.vmap(model, axis_name="batch")(batch["x"])
+    # to handle stateful and stateless models in the same val step
+    if isinstance(preds, tuple):
+        preds = preds[0]
+
+    loss = loss_fn(preds, batch["y"])
     return ValStepOutput(
         loss=loss,
         y=batch["y"],
@@ -96,13 +92,15 @@ def stateful_train_step(model: StatefulNet, batch, state) -> StepOutput:
     if state is None:
         raise ValueError("Stateful training requires a state.")
 
-    def loss_fn(m: StatefulNet, state_: eqx.nn.State):
-        preds, new_state = m(batch["x"], state_, inference=False)
-        loss = jnp.mean((preds - batch["y"]) ** 2)
+    def _step(m: StatefulNet, state_: eqx.nn.State):
+        preds, new_state = jax.vmap(m, axis_name="batch", in_axes=(0, None))(
+            batch["x"], state_
+        )
+        loss = loss_fn(preds, batch["y"])
         return loss, (preds, new_state)
 
     (loss, (preds, new_state)), grads = eqx.filter_value_and_grad(
-        loss_fn,
+        _step,
         has_aux=True,
     )(model, state)
 
@@ -111,19 +109,6 @@ def stateful_train_step(model: StatefulNet, batch, state) -> StepOutput:
         y=batch["y"],
         yhat=preds,
         gradients=grads,
-        state=new_state,
-    )
-
-
-def stateful_val_step(model: StatefulNet, batch, state) -> ValStepOutput:
-    if state is None:
-        raise ValueError("Stateful validation requires a state.")
-    preds, new_state = model(batch["x"], state, inference=True)
-    loss = jnp.mean((preds - batch["y"]) ** 2)
-    return ValStepOutput(
-        loss=loss,
-        y=batch["y"],
-        yhat=preds,
         state=new_state,
     )
 
@@ -159,7 +144,7 @@ def run_training():
     train_loader, val_loader = build_loaders()
     optimizer = optax.adam(learning_rate=0.05)
 
-    # Stateless model -------------------------------------------------
+    # stateless model
     stateless_cb = TrackingCallback("stateless")
     stateless_trainer = Trainer(
         n_epochs=15,
@@ -173,11 +158,11 @@ def run_training():
         optim=optimizer,
         train_step=stateless_train_step,
         trainloader=train_loader,
-        val_step=stateless_val_step,
+        val_step=val_step,
         valloader=val_loader,
     )
 
-    # Stateful model --------------------------------------------------
+    # stateful model
     stateful_cb = TrackingCallback("stateful")
     stateful_trainer = Trainer(
         n_epochs=15,
@@ -196,7 +181,7 @@ def run_training():
         optim=optimizer,
         train_step=stateful_train_step,
         trainloader=train_loader,
-        val_step=stateful_val_step,
+        val_step=val_step,
         valloader=val_loader,
         train_state=state,
     )
@@ -225,7 +210,8 @@ def main():
 
     fig.suptitle("Training convergence for stateless vs. stateful models")
     fig.tight_layout()
-    plt.show()
+    plt.savefig("train_small_models.pdf")
+    plt.savefig("train_small_models.svg")
 
 
 if __name__ == "__main__":

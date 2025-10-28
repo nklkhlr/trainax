@@ -3,21 +3,24 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
 import jax.sharding as jsd
-import jax.tree_util as jtu
 import numpy as np
 from jaxtyping import Array, PyTree
 from numpy.typing import NDArray
 from optax import GradientTransformation
-from tqdm import tqdm, trange
+from tqdm import tqdm
 from tqdm.rich import tqdm as rich_tqdm
-from tqdm.rich import trange as rich_trange
 
 from trainax._callbacks import Callback
 from trainax._dataloader import JaxLoader
 from trainax._file_handler import FileHandler
-from trainax._types import EpochOutput, PathLike, StepOutput, ValStepOutput
+from trainax._types import (
+    EpochOutput,
+    PathLike,
+    StepOutput,
+    TrainOutput,
+    ValStepOutput,
+)
 
 StepFun = Callable[
     [Callable[..., Any], dict[str, NDArray | Array]],
@@ -174,10 +177,10 @@ class Trainer:
         self._set_sharding(sharding, kind)
 
     def _epoch_pbar(self, **kwargs) -> tqdm | rich_tqdm:
-        range_fun = rich_trange if self.use_rich else trange
+        tqdm_fun = rich_tqdm if self.use_rich else tqdm
         desc = "Training epochs"
-        return range_fun(
-            self.n_epochs,
+        return tqdm_fun(
+            total=self.n_epochs,
             desc=desc,
             bar_format=(
                 "{desc} [{n:d}/{total_fmt} ({percentage:3.0f}%)] | "
@@ -186,24 +189,18 @@ class Trainer:
             **kwargs,
         )
 
-    def _step_pbar(
-        self, loader: JaxLoader, **kwargs
-    ) -> tqdm | rich_tqdm | JaxLoader:
-        if len(loader) > 1:
-            tqdm_fun = rich_tqdm if self.use_rich else tqdm
-            return tqdm_fun(
-                loader,  # type: ignore
-                desc=kwargs.pop("desc", "Epoch steps"),
-                total=len(loader),
-                bar_format=(
-                    "{desc} [{n:d}/{total_fmt} | {percentage:3.0f}%] | "
-                    "{bar} [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
-                ),
-                leave=kwargs.pop("leave", False),
-                **kwargs,
-            )
-
-        return loader
+    def _step_pbar(self, loader: JaxLoader, **kwargs) -> tqdm | rich_tqdm:
+        tqdm_fun = rich_tqdm if self.use_rich else tqdm
+        return tqdm_fun(
+            desc=kwargs.pop("desc", "Epoch steps"),
+            total=len(loader),
+            bar_format=(
+                "{desc} [{n:d}/{total_fmt} | {percentage:3.0f}%] | "
+                "{bar} [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
+            ),
+            leave=kwargs.pop("leave", False),
+            **kwargs,
+        )
 
     def _validation(
         self,
@@ -218,11 +215,14 @@ class Trainer:
             callback.on_val_start(epoch=epoch, loader=valloader)
 
         if (epoch + 1) % self.val_every == 0 and valloader is not None:
-            for data in self._step_pbar(  # type: ignore[arg-type]
+            pbar = self._step_pbar(
                 valloader, desc="Validation steps", leave=False
-            ):
+            )
+            for data in valloader:
                 output = val_step(model, data)
                 step_results.append(output)  # type: ignore[arg-type]
+                pbar.update(1)
+            pbar.refresh()
 
         for callback in self.callbacks.values():
             callback.on_val_end(epoch=epoch, data=step_results)
@@ -240,23 +240,6 @@ class Trainer:
         # TODO: add in model sharding on .model
 
         return trainloader, valloader
-
-    @staticmethod
-    def _clone_state(state: PyTree | None) -> PyTree | None:
-        """Create a deep copy of mutable state trees to avoid reuse errors."""
-        if state is None:
-            return None
-
-        def _clone_leaf(leaf):
-            if isinstance(leaf, jax.Array):
-                return jnp.array(leaf, copy=True)
-            if isinstance(leaf, np.ndarray):
-                return np.array(leaf, copy=True)
-            return leaf
-
-        leaves, treedef = jtu.tree_flatten(state)
-        cloned_leaves = [_clone_leaf(leaf) for leaf in leaves]
-        return jtu.tree_unflatten(treedef, cloned_leaves)
 
     @staticmethod
     def _jit_val_step(
@@ -285,7 +268,9 @@ class Trainer:
 
     def _invoke_callbacks(
         self,
-        event: Literal["epoch_start", "epoch_end", "step_start", "step_end"],
+        event: Literal[
+            "epoch_start", "epoch_end", "step_start", "step_end", "train_end"
+        ],
         **kwargs,
     ):
         for callback in self.callbacks.values():
@@ -304,7 +289,7 @@ class Trainer:
             [Callable[..., Any]],
             Callable[..., Any],
         ] = eqx.filter_jit,
-    ) -> tuple[Callable[..., Any], PyTree | None]:
+    ) -> TrainOutput:
         """Execute the training loop and return the updated model/state.
 
         Parameters
@@ -330,7 +315,7 @@ class Trainer:
 
         Returns
         -------
-        tuple[Callable[..., Any], PyTree | None]
+        TrainOutput
             The updated model and final training state (if present).
         """
         agg_fun = self._agg_funs[self._aggregate_steps]
@@ -343,7 +328,7 @@ class Trainer:
 
         trainloader, valloader = self._prep_data(trainloader, valloader)
 
-        def _update(
+        def _step(
             model_: Callable[..., Any],
             data_: dict[str, NDArray | Array],
             opt_state_: PyTree,
@@ -352,29 +337,27 @@ class Trainer:
             if state_ is None:
                 out = train_step(model_, data_)  # type: ignore
             else:
-                state_input = self._clone_state(state_)
-                out = train_step(model_, data_, state_input)  # type: ignore
+                out = train_step(model_, data_, state_)  # type: ignore
 
             if out.gradients is None:
                 raise ValueError(
                     "train_step must return gradients to apply optimizer "
                     "updates."
                 )
-            updates, opt_state_new = optim.update(out.gradients, opt_state_)
-            model_new = eqx.apply_updates(model_, updates)
-            state_new = (
-                self._clone_state(out.state)
-                if out.state is not None
-                else state_
+            updates, opt_state_ = optim.update(
+                out.gradients, opt_state_, eqx.filter(model_, eqx.is_array)
             )
-            return model_new, out, opt_state_new, state_new
+            model_ = eqx.apply_updates(model_, updates)
 
-        update_fun = jit_fun(_update)
-        opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
+            return model_, out, opt_state_, out.state
+
+        step_fun = jit_fun(_step)
+        opt_state = optim.init(eqx.filter(model, eqx.is_array))
         state = train_state
 
         val_step_fun = self._jit_val_step(jit_fun, valloader, val_step)
-        for epoch in (epoch_bar := self._epoch_pbar()):
+        epoch_bar = self._epoch_pbar()
+        for epoch in range(self.n_epochs):
             self._invoke_callbacks(
                 event="epoch_start",
                 epoch=epoch,
@@ -383,9 +366,9 @@ class Trainer:
             )
 
             epoch_data: list[StepOutput] = []
-            step_bar = self._step_pbar(trainloader)  # type: ignore
-            for data in step_bar:
-                model, output, opt_state, state = update_fun(
+            step_bar = self._step_pbar(trainloader)
+            for data in trainloader:
+                model, output, opt_state, state = step_fun(
                     model, data, opt_state, state
                 )
                 epoch_data.append(output)
@@ -395,13 +378,16 @@ class Trainer:
                     pbar=step_bar,
                     step_output=output,
                 )
+                step_bar.update(1)
+            step_bar.refresh()
 
             val_outputs: list[ValStepOutput] | None = None
             if val_step_fun is not None:
                 inference_model = eqx.nn.inference_mode(model)
-                inference_model = eqx.Partial(
-                    inference_model, state=train_state
-                )
+                if state is not None:
+                    inference_model = eqx.Partial(
+                        inference_model, state=train_state
+                    )
 
                 val_outputs = self._validation(
                     epoch=epoch,
@@ -425,5 +411,12 @@ class Trainer:
                 epoch_output=epoch_output,
                 file_handler=self.file_handler,
             )
+            epoch_bar.update(1)
+        epoch_bar.refresh()
 
-        return model, state
+        self._invoke_callbacks(
+            event="train_end",
+            pbar=epoch_bar,
+        )
+
+        return TrainOutput(model, state)

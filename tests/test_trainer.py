@@ -255,16 +255,18 @@ def test_trainer_requires_validation_step(
         )
 
 
+@pytest.mark.parametrize("data_sharding", [None, [0, 1]])
 def test_trainer_trains_stateless_model(
-    stateless_model,
-    train_loader,
-    optimizer,
+    stateless_model, train_loader, optimizer, data_sharding
 ):
+    print(f"\n\nSharding stateless: {data_sharding}\n")
+
     trainer = Trainer(
         n_epochs=4,
         callbacks=[],
         val_every=1,
         use_rich=False,
+        data_sharding=data_sharding,
     )
     initial_loss = compute_stateless_loss(stateless_model, train_loader)
 
@@ -283,11 +285,12 @@ def test_trainer_trains_stateless_model(
     assert trained_state is None
 
 
+@pytest.mark.parametrize("data_sharding", [None, [0, 1]])
 def test_trainer_trains_stateful_model_and_updates_state(
-    stateful_model_and_state,
-    train_loader,
-    optimizer,
+    stateful_model_and_state, train_loader, optimizer, data_sharding
 ):
+    print(f"\n\nSharding stateful: {data_sharding}\n")
+
     model, base_state = stateful_model_and_state
     train_state = clone_state(base_state)
     trainer = Trainer(
@@ -295,6 +298,7 @@ def test_trainer_trains_stateful_model_and_updates_state(
         callbacks=[],
         val_every=1,
         use_rich=False,
+        data_sharding=data_sharding,
     )
 
     initial_loss = compute_stateful_loss(
@@ -323,6 +327,28 @@ def test_trainer_trains_stateful_model_and_updates_state(
     )
     assert final_loss < initial_loss
     clone_state(trained_state)
+
+
+@pytest.mark.filterwarnings("ignore:rich ")
+def test_trainer_rich_progress(
+    stateless_model,
+    train_loader,
+    optimizer,
+):
+    trainer = Trainer(
+        n_epochs=4,
+        callbacks=[],
+        val_every=1,
+        use_rich=True,
+    ).train(
+        model=stateless_model,
+        optim=optimizer,
+        train_step=stateless_train_step,
+        trainloader=train_loader,
+        val_step=None,
+        valloader=None,
+        jit_fun=lambda fn: fn,
+    )
 
 
 def test_trainer_validation_frequency_and_recording(
@@ -405,7 +431,9 @@ def test_trainer_stateful_requires_initial_state(
         use_rich=False,
     )
 
-    with pytest.raises(TypeError, match="missing 1 required positional argument"):
+    with pytest.raises(
+        TypeError, match="missing 1 required positional argument"
+    ):
         trainer.train(
             model=model,
             optim=optimizer,

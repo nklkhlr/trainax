@@ -2,10 +2,12 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
 import numpy as np
 from jax.tree_util import register_dataclass
 from jaxtyping import Array, Float, PyTree
 from numpy.typing import NDArray
+
 # from pydantic.dataclasses import dataclass
 
 PathLike = os.PathLike | Path | str
@@ -77,5 +79,16 @@ class EpochOutput:
         )
 
 
+@dataclass
+class TrainOutput:
+    model: PyTree
+    state: PyTree | None
+
+    def __iter__(self):
+        return iter((self.model, self.state))
+
+
 register_dataclass(StepOutput)
 register_dataclass(ValStepOutput)
+register_dataclass(EpochOutput)
+register_dataclass(TrainOutput)

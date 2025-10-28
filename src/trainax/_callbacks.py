@@ -52,6 +52,10 @@ class Callback:
         """Execute callback after validation completes."""
         pass
 
+    def on_train_end(self, *args, **kwargs):
+        """Execute callback at the end of training."""
+        pass
+
 
 class EpochLogger(Callback):
     """Log training/validation summaries through to console/file."""
@@ -131,6 +135,10 @@ class PbarHandler(Callback):
         """Update the progress bar with the latest loss statistics."""
         msg = _train_loss_msg(epoch_output) + self._val_message(epoch_output)
         pbar.set_postfix_str(f"[{msg}]")
+
+    def on_train_end(self, pbar: tqdm, **kwargs):
+        """Ensure progress bar is 'full'."""
+        pbar.update(pbar.total)
 
 
 class LossMetricTracker(Callback):
