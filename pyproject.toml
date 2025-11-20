@@ -8,9 +8,7 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "equinox>=0.13.0",
-    # currently jax >= 0.7.0 does not work with equinox
-    "jax<=0.6.2",
+    "jax>=0.8.0",
     "jaxtyping>=0.3.2",
     "optax>=0.2.6",
     "rich>=14.1.0",
@@ -119,4 +117,12 @@ dev = [
     "matplotlib>=3.10.7",
     "pytest-cov>=6.2.1",
     "ruff>=0.12.10",
+    "tensorflow>=2.20.0",
+    "tensorflow-datasets>=4.9.9",
+]
+eqx = [
+    "equinox>=0.13.2",
+]
+flax = [
+    "flax>=0.11.2",
 ]

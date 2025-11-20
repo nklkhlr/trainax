@@ -1,7 +1,7 @@
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, Literal
 
-import equinox as eqx
 import jax
 import jax.sharding as jsd
 import numpy as np
@@ -32,7 +32,14 @@ StateStepFun = Callable[
 ]
 
 
-class Trainer:
+# TODO:
+# * make trainer abstract base class
+# * implement equinox subclass
+# * implement flax.nnx subclass
+# => lazy loading of equinox/flax
+
+
+class Trainer(ABC):
     """Main training handler.
 
     Deals with training, validation, and callback handling.
@@ -65,9 +72,11 @@ class Trainer:
     }
     _aggregate_steps: Literal["mean", "min", "max"]
     _sharding: dict[str, jsd.NamedSharding | jsd.SingleDeviceSharding | None]
+    _jit_fun: Callable
 
     def __init__(
         self,
+        _jit_fun,
         n_epochs: int,
         callbacks: list[Callback],
         continuous_files: dict[str, PathLike] | None = None,
@@ -101,6 +110,8 @@ class Trainer:
             Aggregation strategy used when reducing batch metrics to epoch
             summaries.
         """
+        self._jit_fun = _jit_fun
+
         self.callbacks = {callback.name: callback for callback in callbacks}
 
         self.file_handler = FileHandler(continuous_files or {})
@@ -241,18 +252,14 @@ class Trainer:
 
         return trainloader, valloader
 
-    @staticmethod
     def _jit_val_step(
-        jit_fun: Callable[
-            [Callable[..., Any]],
-            Callable[..., Any],
-        ],
+        self,
         valloader: JaxLoader | None,
         val_step: StateStepFun | StepFun | None,
     ) -> StateStepFun | StepFun | None:
         if valloader is not None:
             if val_step is not None:
-                return jit_fun(val_step)
+                return self._jit_fun(val_step)
             raise ValueError(
                 "Validation loader provided but val_step is not defined. "
                 "Please set the validation step function "
@@ -276,6 +283,30 @@ class Trainer:
         for callback in self.callbacks.values():
             getattr(callback, "on_" + event)(**kwargs)
 
+    @staticmethod
+    @abstractmethod
+    def _optim_init(
+        optim,
+        model: Callable[..., Any],
+    ) -> PyTree:
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def _setup_step_fun(
+        train_step: StateStepFun | StepFun,
+        optim: GradientTransformation,
+    ) -> Callable[..., Any]:
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def _inference_mode(
+        model: Callable[..., Any], state: PyTree | None
+    ) -> Callable[..., Any]:
+        """Wrap model in inference mode."""
+        pass
+
     def train(
         self,
         model: Callable[..., Any],
@@ -285,10 +316,6 @@ class Trainer:
         val_step: StepFun | None,
         valloader: JaxLoader | None,
         train_state: PyTree | None = None,
-        jit_fun: Callable[
-            [Callable[..., Any]],
-            Callable[..., Any],
-        ] = eqx.filter_jit,
     ) -> TrainOutput:
         """Execute the training loop and return the updated model/state.
 
@@ -310,8 +337,6 @@ class Trainer:
             Validation loader yielding batches; ignored when ``None``.
         train_state : PyTree | None, optional
             Initial mutable state (e.g. BatchNorm statistics) for training.
-        jit_fun : Callable, optional
-            Transformation used to JIT the update/validation functions.
 
         Returns
         -------
@@ -328,34 +353,11 @@ class Trainer:
 
         trainloader, valloader = self._prep_data(trainloader, valloader)
 
-        def _step(
-            model_: Callable[..., Any],
-            data_: dict[str, NDArray | Array],
-            opt_state_: PyTree,
-            state_: PyTree | None,
-        ):
-            if state_ is None:
-                out = train_step(model_, data_)  # type: ignore
-            else:
-                out = train_step(model_, data_, state_)  # type: ignore
-
-            if out.gradients is None:
-                raise ValueError(
-                    "train_step must return gradients to apply optimizer "
-                    "updates."
-                )
-            updates, opt_state_ = optim.update(
-                out.gradients, opt_state_, eqx.filter(model_, eqx.is_array)
-            )
-            model_ = eqx.apply_updates(model_, updates)
-
-            return model_, out, opt_state_, out.state
-
-        step_fun = jit_fun(_step)
-        opt_state = optim.init(eqx.filter(model, eqx.is_array))
+        step_fun = self._jit_fun(self._setup_step_fun(train_step, optim))
+        opt_state = self._optim_init(optim, model)
         state = train_state
 
-        val_step_fun = self._jit_val_step(jit_fun, valloader, val_step)
+        val_step_fun = self._jit_val_step(valloader, val_step)
         epoch_bar = self._epoch_pbar()
         for epoch in range(self.n_epochs):
             self._invoke_callbacks(
@@ -383,12 +385,7 @@ class Trainer:
 
             val_outputs: list[ValStepOutput] | None = None
             if val_step_fun is not None:
-                inference_model = eqx.nn.inference_mode(model)
-                if state is not None:
-                    inference_model = eqx.Partial(
-                        inference_model, state=train_state
-                    )
-
+                inference_model = self._inference_mode(model, state)
                 val_outputs = self._validation(
                     epoch=epoch,
                     model=inference_model,
@@ -420,3 +417,213 @@ class Trainer:
         )
 
         return TrainOutput(model, state)
+
+
+class EQXTrainer(Trainer):
+    def __init__(
+        self,
+        n_epochs: int,
+        callbacks: list[Callback],
+        continuous_files: dict[str, PathLike] | None = None,
+        val_every: int = 5,
+        use_rich: bool = True,
+        model_sharding: list[int] | int | jsd.NamedSharding | None = None,
+        data_sharding: list[int] | int | jsd.NamedSharding | None = None,
+        aggregate_steps: Literal["mean", "min", "max"] = "mean",
+    ):
+        """Initialise a trainer instance for an equinox model.
+
+        Parameters
+        ----------
+        n_epochs : int
+            Number of epochs to iterate through.
+        callbacks : list[Callback]
+            Callback instances for logging, checkpointing, etc.
+        continuous_files : dict[str, PathLike], optional
+            Mapping of callback keys to open file paths managed by
+            :class:`~trainax._file_handler.FileHandler`.
+        val_every : int, default=5
+            Frequency (in epochs) for running validation steps.
+        use_rich : bool, default=True
+            Enable rich progress bars when available.
+        model_sharding : list[int] | int | jsd.NamedSharding | None, optional
+            Placeholder for future model sharding support. Any non-``None``
+            value currently raises an Exception.
+        data_sharding : list[int] | int | jsd.NamedSharding | None, optional
+            Sharding applied to provided data loaders.
+        aggregate_steps : {"mean", "min", "max"}, default="mean"
+            Aggregation strategy used when reducing batch metrics to epoch
+            summaries.
+        """
+        try:
+            import equinox as eqx
+        except ImportError as ie:
+            raise ImportError(
+                "Equinox must be installed to use EQXTrainer. "
+                "Install with either of "
+                "`pip install <trainax[eqx]|trainax[all]|equinox`."
+            ) from ie
+
+        super().__init__(
+            eqx.filter_jit,
+            n_epochs=n_epochs,
+            callbacks=callbacks,
+            continuous_files=continuous_files,
+            val_every=val_every,
+            use_rich=use_rich,
+            model_sharding=model_sharding,
+            data_sharding=data_sharding,
+            aggregate_steps=aggregate_steps,
+        )
+
+    @staticmethod
+    def _optim_init(
+        optim: GradientTransformation,
+        model: Callable[..., Any],
+    ) -> PyTree:
+        import equinox as eqx
+
+        return optim.init(eqx.filter(model, eqx.is_array))
+
+    @staticmethod
+    def _setup_step_fun(
+        train_step: StateStepFun | StepFun,
+        optim: GradientTransformation,
+    ) -> Callable[..., Any]:
+        import equinox as eqx
+
+        def _fun(
+            model_: Callable[..., Any],
+            data_: dict[str, NDArray | Array],
+            opt_state_: PyTree,
+            state_: PyTree | None,
+        ) -> tuple[Callable[..., Any], StepOutput, PyTree, PyTree | None]:
+            if state_ is None:
+                out = train_step(model_, data_)  # type: ignore
+            else:
+                out = train_step(model_, data_, state_)  # type: ignore
+
+            if out.gradients is None:
+                raise ValueError(
+                    "train_step must return gradients to apply optimizer "
+                    "updates."
+                )
+            updates, opt_state_ = optim.update(
+                out.gradients, opt_state_, eqx.filter(model_, eqx.is_array)
+            )
+            model_ = eqx.apply_updates(model_, updates)
+
+            return model_, out, opt_state_, out.state
+
+        return _fun
+
+    @staticmethod
+    def _inference_mode(
+        model: Callable[..., Any], state: PyTree | None
+    ) -> Callable[..., Any]:
+        import equinox as eqx
+
+        inference_model = eqx.nn.inference_mode(model)
+        if state is not None:
+            inference_model = eqx.Partial(inference_model, state=state)
+        return inference_model
+
+
+class NNXTrainer(Trainer):
+    def __init__(
+        self,
+        n_epochs: int,
+        callbacks: list[Callback],
+        continuous_files: dict[str, PathLike] | None = None,
+        val_every: int = 5,
+        use_rich: bool = True,
+        model_sharding: list[int] | int | jsd.NamedSharding | None = None,
+        data_sharding: list[int] | int | jsd.NamedSharding | None = None,
+        aggregate_steps: Literal["mean", "min", "max"] = "mean",
+    ):
+        """Initialise a trainer instance for a flax.nnx model.
+
+        Parameters
+        ----------
+        n_epochs : int
+            Number of epochs to iterate through.
+        callbacks : list[Callback]
+            Callback instances for logging, checkpointing, etc.
+        continuous_files : dict[str, PathLike], optional
+            Mapping of callback keys to open file paths managed by
+            :class:`~trainax._file_handler.FileHandler`.
+        val_every : int, default=5
+            Frequency (in epochs) for running validation steps.
+        use_rich : bool, default=True
+            Enable rich progress bars when available.
+        model_sharding : list[int] | int | jsd.NamedSharding | None, optional
+            Placeholder for future model sharding support. Any non-``None``
+            value currently raises an Exception.
+        data_sharding : list[int] | int | jsd.NamedSharding | None, optional
+            Sharding applied to provided data loaders.
+        aggregate_steps : {"mean", "min", "max"}, default="mean"
+            Aggregation strategy used when reducing batch metrics to epoch
+            summaries.
+        """
+        try:
+            from flax import nnx
+        except ImportError as ie:
+            raise ImportError(
+                "Flax must be installed to use NNXTrainer. "
+                "Install with either of "
+                "`pip install <trainax[flax]|trainax[all]|flax`."
+            ) from ie
+
+        super().__init__(
+            nnx.jit,
+            n_epochs=n_epochs,
+            callbacks=callbacks,
+            continuous_files=continuous_files,
+            val_every=val_every,
+            use_rich=use_rich,
+            model_sharding=model_sharding,
+            data_sharding=data_sharding,
+            aggregate_steps=aggregate_steps,
+        )
+
+    @staticmethod
+    def _optim_init(
+        optim: GradientTransformation,
+        model: Callable[..., Any],
+    ) -> PyTree:
+        from flax import nnx
+
+        return nnx.ModelAndOptimizer(model, optim)  # type: ignore
+
+    @staticmethod
+    def _setup_step_fun(
+        train_step: StateStepFun | StepFun,
+        optim,
+    ) -> Callable[..., Any]:
+        from flax import nnx
+
+        def _fun(
+            model_: nnx.Module,
+            data_: dict[str, NDArray | Array],
+            opt_state_: PyTree,
+            _: None,
+        ) -> tuple[Callable[..., Any], StepOutput, PyTree, PyTree | None]:
+            out = train_step(model_, data_)  # type: ignore
+
+            if out.gradients is None:
+                raise ValueError(
+                    "train_step must return gradients to apply optimizer "
+                    "updates."
+                )
+
+            opt_state_.update(out.gradients)
+            return model_, out, opt_state_, out.state  # type: ignore
+
+        return _fun
+
+    @staticmethod
+    def _inference_mode(
+        model: Callable[..., Any], state: None
+    ) -> Callable[..., Any]:
+        model.eval()
+        return model
