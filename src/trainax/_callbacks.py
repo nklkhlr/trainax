@@ -7,7 +7,7 @@ from jaxtyping import Float, Int
 from tqdm import tqdm
 
 from trainax._file_handler import FileHandler
-from trainax._types import EpochOutput, StepOutput
+from trainax._types import EpochOutput, StepOutput, ValStepOutput
 
 
 def _train_loss_msg(epoch_output: EpochOutput) -> str:
@@ -40,7 +40,15 @@ class Callback:
         """Execute callback after each epoch with aggregated results."""
         pass
 
-    def on_step_end(self, pbar: tqdm, step_output: StepOutput):
+    def on_train_step_end(self, step_output: StepOutput, **kwargs):
+        """Execute callback after each training step."""
+        pass
+
+    def on_val_step_start(self, step_output: StepOutput, **kwargs):
+        """Execute callback after each training step."""
+        pass
+
+    def on_val_step_end(self, step_output: StepOutput, **kwargs):
         """Execute callback after each training step."""
         pass
 
@@ -312,3 +320,63 @@ class BestModelSaver(Callback):
                     "'val_loss'."
                 ) from te
             raise te
+
+
+# TODO: callback for using flax.nns.metrics.Metric
+class NNXMetricTracker(Callback):
+    """Tracking metrics with nnx.metrics.Metric."""
+
+    __slots__ = ["metrics", "history", "_mode"]
+
+    def __init__(
+        self,
+        metrics,
+        name: str = "NNXMetricTracker",
+    ):
+        super().__init__(name)
+
+        try:
+            from flax import nnx
+        except ImportError as ie:
+            raise ImportError(
+                "NNXMetricTracker requires flax to be installed."
+            ) from ie
+
+        if not isinstance(metrics, nnx.metrics.MultiMetric):
+            # this allows us to keep a dict
+            metrics = nnx.metrics.MultiMetric(
+                **{type(metrics).__name__: metrics}
+            )
+        self.metrics = metrics
+        self._mode = "train"
+
+        self.history = {}
+        for metric in self.metrics._metric_names:
+            for mode in ["train", "val"]:
+                self.history[f"{mode}_{metric}"] = []
+
+    def _reset(self):
+        for metric, value in self.metrics.compute().items():
+            self.history[f"{self._mode}_{metric}"].append(value)
+
+    def on_train_step_end(self, step_output: StepOutput, **kwargs):
+        self.metrics.update(
+            loss=step_output.loss, logits=step_output.yhat, labels=step_output.y
+        )
+
+    def on_val_end(self, epoch, data: list[ValStepOutput], **kwargs):
+        self._reset()
+        self.mode = "val"
+        for res in data:
+            self.metrics.update(loss=res.loss, logits=res.yhat, labels=res.y)
+
+    def on_epoch_end(
+        self,
+        model: Callable,
+        pbar: tqdm,
+        epoch: int,
+        epoch_output: EpochOutput,
+        file_handler: FileHandler,
+    ):
+        self._reset()
+        self._mode = "train"

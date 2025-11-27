@@ -20,7 +20,7 @@ class StepOutput:
     yhat: NDArray | Array
     gradients: PyTree | None = None
     state: PyTree | None = None
-    metrics: dict[str, float] | None = None
+    metrics: dict[str, float] | PyTree | None = None
 
 
 @dataclass
@@ -29,7 +29,7 @@ class ValStepOutput:
     y: NDArray | Array
     yhat: NDArray | Array
     state: PyTree | None = None
-    metrics: dict[str, float] | None = None
+    metrics: dict[str, float] | PyTree | None = None
 
 
 @dataclass

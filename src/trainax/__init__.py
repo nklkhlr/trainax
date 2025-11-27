@@ -5,6 +5,7 @@ from trainax._callbacks import (
     Callback,
     EpochLogger,
     LossMetricTracker,
+    NNXMetricTracker,
     PbarHandler,
 )
 from trainax._dataloader import JaxLoader, SingleBatchJaxLoader
@@ -17,6 +18,7 @@ __all__ = [
     "EpochLogger",
     "JaxLoader",
     "LossMetricTracker",
+    "NNXMetricTracker",
     "PbarHandler",
     "SingleBatchJaxLoader",
     "StepOutput",

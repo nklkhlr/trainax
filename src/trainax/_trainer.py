@@ -219,6 +219,7 @@ class Trainer(ABC):
         model: Callable[..., Any],
         val_step: StepFun,
         valloader: JaxLoader,
+        **kwargs,
     ) -> list[ValStepOutput]:
         step_results: list[ValStepOutput] = []
 
@@ -230,7 +231,7 @@ class Trainer(ABC):
                 valloader, desc="Validation steps", leave=False
             )
             for data in valloader:
-                output = val_step(model, data)
+                output = val_step(model, data, **kwargs)
                 step_results.append(output)  # type: ignore[arg-type]
                 pbar.update(1)
             pbar.refresh()
@@ -276,7 +277,13 @@ class Trainer(ABC):
     def _invoke_callbacks(
         self,
         event: Literal[
-            "epoch_start", "epoch_end", "step_start", "step_end", "train_end"
+            "epoch_start",
+            "epoch_end",
+            "val_step_start",
+            "val_step_end",
+            "train_step_start",
+            "train_step_end",
+            "train_end",
         ],
         **kwargs,
     ):
@@ -307,6 +314,12 @@ class Trainer(ABC):
         """Wrap model in inference mode."""
         pass
 
+    @staticmethod
+    @abstractmethod
+    def _train_mode(model: Callable[..., Any], **kwargs) -> Callable[..., Any]:
+        """Set model in training mode."""
+        pass
+
     def train(
         self,
         model: Callable[..., Any],
@@ -316,6 +329,7 @@ class Trainer(ABC):
         val_step: StepFun | None,
         valloader: JaxLoader | None,
         train_state: PyTree | None = None,
+        **kwargs,
     ) -> TrainOutput:
         """Execute the training loop and return the updated model/state.
 
@@ -353,7 +367,9 @@ class Trainer(ABC):
 
         trainloader, valloader = self._prep_data(trainloader, valloader)
 
-        step_fun = self._jit_fun(self._setup_step_fun(train_step, optim))
+        step_fun = self._jit_fun(
+            self._setup_step_fun(train_step, optim, **kwargs)
+        )
         opt_state = self._optim_init(optim, model)
         state = train_state
 
@@ -376,7 +392,7 @@ class Trainer(ABC):
                 epoch_data.append(output)
 
                 self._invoke_callbacks(
-                    event="step_end",
+                    event="train_step_end",
                     pbar=step_bar,
                     step_output=output,
                 )
@@ -395,6 +411,7 @@ class Trainer(ABC):
                 if not val_outputs:
                     val_outputs = None
 
+            model = self._train_mode(model)
             epoch_output = EpochOutput.from_step_outputs(
                 epoch_data,
                 agg_fun,
@@ -489,6 +506,7 @@ class EQXTrainer(Trainer):
     def _setup_step_fun(
         train_step: StateStepFun | StepFun,
         optim: GradientTransformation,
+        **kwargs,
     ) -> Callable[..., Any]:
         import equinox as eqx
 
@@ -499,9 +517,9 @@ class EQXTrainer(Trainer):
             state_: PyTree | None,
         ) -> tuple[Callable[..., Any], StepOutput, PyTree, PyTree | None]:
             if state_ is None:
-                out = train_step(model_, data_)  # type: ignore
+                out = train_step(model_, data_, **kwargs)  # type: ignore
             else:
-                out = train_step(model_, data_, state_)  # type: ignore
+                out = train_step(model_, data_, state_, **kwargs)  # type: ignore
 
             if out.gradients is None:
                 raise ValueError(
@@ -527,6 +545,12 @@ class EQXTrainer(Trainer):
         if state is not None:
             inference_model = eqx.Partial(inference_model, state=state)
         return inference_model
+
+    @staticmethod
+    def _train_mode(model: Callable[..., Any], **kwargs) -> Callable[..., Any]:
+        import equinox as eqx
+
+        return eqx.nn.inference_mode(model, value=False)
 
 
 class NNXTrainer(Trainer):
@@ -597,8 +621,7 @@ class NNXTrainer(Trainer):
 
     @staticmethod
     def _setup_step_fun(
-        train_step: StateStepFun | StepFun,
-        optim,
+        train_step: StateStepFun | StepFun, optim, **kwargs
     ) -> Callable[..., Any]:
         from flax import nnx
 
@@ -608,7 +631,7 @@ class NNXTrainer(Trainer):
             opt_state_: PyTree,
             _: None,
         ) -> tuple[Callable[..., Any], StepOutput, PyTree, PyTree | None]:
-            out = train_step(model_, data_)  # type: ignore
+            out = train_step(model_, data_, **kwargs)  # type: ignore
 
             if out.gradients is None:
                 raise ValueError(
@@ -625,5 +648,10 @@ class NNXTrainer(Trainer):
     def _inference_mode(
         model: Callable[..., Any], state: None
     ) -> Callable[..., Any]:
-        model.eval()
+        model.eval()  # type: ignore
+        return model
+
+    @staticmethod
+    def _train_mode(model: Callable[..., Any], **kwargs) -> Callable[..., Any]:
+        model.train()  # type: ignore
         return model
