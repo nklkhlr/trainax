@@ -8,7 +8,7 @@ import numpy as np
 from jaxtyping import Array, PyTree
 from numpy.typing import NDArray
 from optax import GradientTransformation
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from tqdm.rich import tqdm as rich_tqdm
 
 from trainax._callbacks import Callback
@@ -48,8 +48,8 @@ class Trainer(ABC):
     ----------
     callbacks : dict[str, Callback]
         Mapping of callback names to callback instances.
-    file_handlers : dict[str, FileHandler]
-        Mapping of callback names to file handlers.
+    file_handler : FileHandler
+        File handler for continuously writing and logging via callbacks.
     n_epochs : int
         Number of epochs to iterate through.
     val_every : int
@@ -59,7 +59,7 @@ class Trainer(ABC):
     """
 
     callbacks: dict[str, Callback]
-    file_handlers: dict[str, FileHandler]
+    file_handler: FileHandler
 
     n_epochs: int
     val_every: int
@@ -73,6 +73,7 @@ class Trainer(ABC):
     _aggregate_steps: Literal["mean", "min", "max"]
     _sharding: dict[str, jsd.NamedSharding | jsd.SingleDeviceSharding | None]
     _jit_fun: Callable
+    _val_pbar: tqdm | None
 
     def __init__(
         self,
@@ -194,8 +195,8 @@ class Trainer(ABC):
             total=self.n_epochs,
             desc=desc,
             bar_format=(
-                "{desc} [{n:d}/{total_fmt} ({percentage:3.0f}%)] | "
-                "{bar} [{elapsed}<{remaining}, {rate_fmt}] | {postfix}"
+                "{desc} [{n:d}/{total_fmt} | {percentage:3.0f}%] "
+                "{bar} [{elapsed}<{remaining}, {rate_fmt}] {postfix}"
             ),
             **kwargs,
         )
@@ -206,8 +207,8 @@ class Trainer(ABC):
             desc=kwargs.pop("desc", "Epoch steps"),
             total=len(loader),
             bar_format=(
-                "{desc} [{n:d}/{total_fmt} | {percentage:3.0f}%] | "
-                "{bar} [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
+                "{desc} [{n:d}/{total_fmt} | {percentage:3.0f}%] "
+                "{bar} [{elapsed}<{remaining}, {rate_fmt}]"
             ),
             leave=kwargs.pop("leave", False),
             **kwargs,
@@ -226,10 +227,11 @@ class Trainer(ABC):
         for callback in self.callbacks.values():
             callback.on_val_start(epoch=epoch, loader=valloader)
 
-        if (epoch + 1) % self.val_every == 0 and valloader is not None:
-            pbar = self._step_pbar(
-                valloader, desc="Validation steps", leave=False
+        if epoch % self.val_every == 0 and valloader is not None:
+            pbar = self._val_pbar or self._step_pbar(
+                valloader, desc="Validation steps"
             )
+            pbar.reset(total=len(valloader))
             for data in valloader:
                 output = val_step(model, data, **kwargs)
                 step_results.append(output)  # type: ignore[arg-type]
@@ -250,7 +252,6 @@ class Trainer(ABC):
                 valloader.set_sharding(data_sharding)
 
         # TODO: add in model sharding on .model
-
         return trainloader, valloader
 
     def _jit_val_step(
@@ -364,6 +365,9 @@ class Trainer(ABC):
                 "Please set the validation step function "
                 "(Trainer.val_step)."
             )
+        self._val_pbar = None
+
+        self.file_handler.open()
 
         trainloader, valloader = self._prep_data(trainloader, valloader)
 
@@ -375,6 +379,7 @@ class Trainer(ABC):
 
         val_step_fun = self._jit_val_step(valloader, val_step)
         epoch_bar = self._epoch_pbar()
+        step_bar = self._step_pbar(trainloader)
         for epoch in range(self.n_epochs):
             self._invoke_callbacks(
                 event="epoch_start",
@@ -384,7 +389,7 @@ class Trainer(ABC):
             )
 
             epoch_data: list[StepOutput] = []
-            step_bar = self._step_pbar(trainloader)
+            step_bar.reset()
             for data in trainloader:
                 model, output, opt_state, state = step_fun(
                     model, data, opt_state, state
@@ -427,6 +432,8 @@ class Trainer(ABC):
             )
             epoch_bar.update(1)
         epoch_bar.refresh()
+
+        self.file_handler.close()
 
         self._invoke_callbacks(
             event="train_end",

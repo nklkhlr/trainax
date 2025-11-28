@@ -70,7 +70,7 @@ class JaxLoader:
 
         if self._batch_size > len(self._data["x"]):
             warnings.warn(
-                f"Batch size {batch_size} is larger than dataset size "
+                f"Batch size ({batch_size}) is larger than dataset size "
                 f"{len(self._data['x'])}. Setting batch size to dataset size.",
                 UserWarning,
                 stacklevel=2,
@@ -80,8 +80,9 @@ class JaxLoader:
             self._n_batches = len(self._data["x"]) // batch_size
             if len(self._data["x"]) % batch_size != 0:
                 warnings.warn(
-                    "Batch size is not a multiple of dataset size. "
-                    "Dropping last batch (random samples for each epoch)",
+                    f"Batch size ({batch_size}) is not a multiple of dataset "
+                    f"size {len(self._data['x'])}. Dropping last batch "
+                    "(random samples for each epoch)",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -135,6 +136,11 @@ class JaxLoader:
     def n_points(self) -> int:
         """Number of points in the dataset."""
         return self._data["x"].shape[0]
+
+    @property
+    def data(self) -> dict[str, Array | NDArray]:
+        """Get the data dictionary."""
+        return self._data
 
     def _set_sharding(
         self, sharding: jsd.NamedSharding | jsd.SingleDeviceSharding | None
@@ -221,9 +227,9 @@ class JaxLoader:
 
     def __repr__(self) -> str:
         """Return a concise summary of the loader configuration."""
-        data_keys = ", ".join(list(self._data.keys()))
+        data_keys = list(self._data.keys())
         if self._sharding is None:
-            sharding_note = "No sharding"
+            sharding_note = "None"
         elif isinstance(self._sharding, jsd.NamedSharding):
             sharding_note = (
                 f"Sharding: {self._sharding.num_devices} devices along "
@@ -233,9 +239,10 @@ class JaxLoader:
             sharding_note = "Sharding: single device"
 
         return (
-            f"{self.__class__.__name__}(Data attributes: {data_keys}, "
-            f"Batch size: {self._batch_size}, "
-            f"N batches: {self._n_batches}, "
+            f"{self.__class__.__name__}(Data attributes: {data_keys} | "
+            f"N samples: {self.n_points} | "
+            f"Batch size: {self._batch_size} | "
+            f"N batches: {self._n_batches} | "
             f"Sharding: {sharding_note})"
         )
 

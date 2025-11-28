@@ -4,6 +4,7 @@ from typing import Any, Literal, TextIO
 
 import numpy as np
 from jaxtyping import Float, Int
+from numpy.typing import NDArray
 from tqdm import tqdm
 
 from trainax._file_handler import FileHandler
@@ -159,8 +160,10 @@ class LossMetricTracker(Callback):
         self,
         train_file_key: str = "train_loss",
         val_file_key: str = "val_loss",
+        name: str = "LossMetricTracker",
         **kwargs,
     ):
+        super().__init__(name)
         self.losses = {
             "train_loss": [],
             "val_loss": [],
@@ -176,7 +179,7 @@ class LossMetricTracker(Callback):
         file: TextIO, loss: Float | tuple[Int, Float] | list[Int | Float]
     ):
         """Normalize loss formats and write them to disk."""
-        if isinstance(loss, float):
+        if isinstance(loss, float) or hasattr(loss, "item"):
             file.write(f"{loss}\n")
         elif isinstance(loss, tuple):
             file.write(f"{loss[0]},{loss[1]}\n")
@@ -322,7 +325,6 @@ class BestModelSaver(Callback):
             raise te
 
 
-# TODO: callback for using flax.nns.metrics.Metric
 class NNXMetricTracker(Callback):
     """Tracking metrics with nnx.metrics.Metric."""
 
@@ -355,18 +357,18 @@ class NNXMetricTracker(Callback):
             for mode in ["train", "val"]:
                 self.history[f"{mode}_{metric}"] = []
 
-    def _reset(self):
+    def _reset(self, epoch: int):
         for metric, value in self.metrics.compute().items():
-            self.history[f"{self._mode}_{metric}"].append(value)
+            self.history[f"{self._mode}_{metric}"].append([epoch, value.item()])
 
     def on_train_step_end(self, step_output: StepOutput, **kwargs):
         self.metrics.update(
             loss=step_output.loss, logits=step_output.yhat, labels=step_output.y
         )
 
-    def on_val_end(self, epoch, data: list[ValStepOutput], **kwargs):
-        self._reset()
-        self.mode = "val"
+    def on_val_end(self, epoch: int, data: list[ValStepOutput], **kwargs):
+        self._reset(epoch)
+        self._mode = "val"
         for res in data:
             self.metrics.update(loss=res.loss, logits=res.yhat, labels=res.y)
 
@@ -378,5 +380,53 @@ class NNXMetricTracker(Callback):
         epoch_output: EpochOutput,
         file_handler: FileHandler,
     ):
-        self._reset()
+        self._reset(epoch)
         self._mode = "train"
+
+    def on_train_end(self, pbar: tqdm, **kwargs):
+        for k, v in self.history.items():
+            self.history[k] = np.array(v)
+
+    @property
+    def tracked_metrics(self) -> set[str]:
+        return {k.split("_")[1] for k in self.history}
+
+    def __getitem__(self, key: str) -> NDArray | tuple[NDArray, NDArray]:
+        try:
+            return self.history[key]
+        except KeyError as ke:
+            if not key.startswith("train_") and not key.startswith("val_"):
+                train = self.history[f"train_{key}"]
+                try:
+                    val = self.history[f"val_{key}"]
+                except KeyError:
+                    return train
+                return train, val
+
+            raise KeyError(
+                f"Metric {key.split('_')[1]} is not tracked by NNXMetricTracker"
+                f". Tracked metrics: {list(self.tracked_metrics)}"
+            ) from ke
+
+    def plot_metric(self, metric: str, **kwargs):
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError as ie:
+            raise ImportError(
+                "NNXMetricTracker.plot_metric requires matplotlib to be "
+                "installed."
+            ) from ie
+
+        ax = kwargs.pop("ax", None) or plt.figure(figsize=(8, 8)).add_subplot()
+        ax.plot(*self[f"train_{metric}"].T, label=f"train {metric}", **kwargs)  # type: ignore
+
+        try:
+            ax.plot(*self[f"val_{metric}"].T, label=f"val {metric}", **kwargs)  # type: ignore
+            ax.legend()
+        except KeyError:
+            pass
+
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(metric.capitalize())
+
+        return ax

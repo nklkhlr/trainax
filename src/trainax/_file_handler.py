@@ -75,7 +75,12 @@ class FileHandler:
         except KeyError as ke:
             if key in self._files:
                 raise KeyError(f"File for key '{key}' not open") from ke
-            raise KeyError(f"File for key '{key}' not in file handler") from ke
+            raise KeyError(
+                f"File for key '{key}' not in file handler. "
+                "Please make sure you pass all files that are used by "
+                "callbacks in the trainer class via the 'continuous_files' "
+                "argument in the trainer constructor."
+            ) from ke
 
     def __setitem__(self, key, value):
         """Alias to :meth:`add_file` allowing dict-like updates."""
