@@ -21,6 +21,7 @@ class JaxLoader:
     _sharding: jsd.NamedSharding | jsd.SingleDeviceSharding | None
     _batch_func: Callable
     _rng: np.random.Generator
+    _x_key: str
 
     def __init__(
         self,
@@ -28,6 +29,7 @@ class JaxLoader:
         batch_size: int,
         sharding: jsd.NamedSharding | jsd.SingleDeviceSharding | None = None,
         seed: int = 42,
+        x_key: str = "x",
     ):
         # TODO: type checks for data and batch_size
         """Initialize a new JaxLoader instance.
@@ -43,19 +45,23 @@ class JaxLoader:
             Sharding configuration to be used for data loading.
         seed : int
             Random seed to be used for data loading.
+        x_key : str
+            Name of the main data array. Used to determine the number of points
+            in the dataset.
 
         Notes
         -----
-        If the nubmer of samples (i.e. data["x"].shape[0]) is not divisible by
+        If the nubmer of samples (i.e. data[x_key].shape[0]) is not divisible by
         the number of samples per batch (i.e. batch_size), the last batch will
         be dropped.
         """
-        if "x" not in data:
+        if x_key not in data:
             raise ValueError(
-                "'data' must contain a key 'x'. This should be the main "
+                f"'data' must contain a key '{x_key}'. This should be the main "
                 "data array and the shape along the first axis should "
                 "correspond to the number of samples."
             )
+        self._x_key = x_key
 
         self._data = data
         self._rng = np.random.default_rng(seed or seed)
@@ -68,17 +74,17 @@ class JaxLoader:
     def _set_batch_size(self, batch_size):
         self._batch_size = batch_size
 
-        if self._batch_size > len(self._data["x"]):
+        if self._batch_size > len(self._data[self._x_key]):
             warnings.warn(
                 f"Batch size ({batch_size}) is larger than dataset size "
                 f"{len(self._data['x'])}. Setting batch size to dataset size.",
                 UserWarning,
                 stacklevel=2,
             )
-            self._batch_size = len(self._data["x"])
+            self._batch_size = len(self._data[self._x_key])
         else:
-            self._n_batches = len(self._data["x"]) // batch_size
-            if len(self._data["x"]) % batch_size != 0:
+            self._n_batches = len(self._data[self._x_key]) // batch_size
+            if len(self._data[self._x_key]) % batch_size != 0:
                 warnings.warn(
                     f"Batch size ({batch_size}) is not a multiple of dataset "
                     f"size {len(self._data['x'])}. Dropping last batch "
@@ -135,7 +141,7 @@ class JaxLoader:
     @property
     def n_points(self) -> int:
         """Number of points in the dataset."""
-        return self._data["x"].shape[0]
+        return self._data[self._x_key].shape[0]
 
     @property
     def data(self) -> dict[str, Array | NDArray]:
