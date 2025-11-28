@@ -287,8 +287,11 @@ class SingleBatchJaxLoader(JaxLoader):
         data: dict,
         sharding: jsd.NamedSharding | jsd.SingleDeviceSharding | None = None,
         seed: int = 42,
+        **kwargs,
     ):
-        super().__init__(data=data, batch_size=1, sharding=sharding, seed=seed)
+        super().__init__(
+            data=data, batch_size=1, sharding=sharding, seed=seed, **kwargs
+        )
 
     def _set_batch_size(self, batch_size):
         """Force the internal batch size to match the dataset length."""
