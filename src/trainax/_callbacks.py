@@ -362,12 +362,15 @@ class NNXMetricTracker(Callback):
             self.history[f"{self._mode}_{metric}"].append([epoch, value.item()])
 
     def on_train_step_end(self, step_output: StepOutput, **kwargs):
+        # add data from single training step
         self.metrics.update(
             loss=step_output.loss, logits=step_output.yhat, labels=step_output.y
         )
 
     def on_val_end(self, epoch: int, data: list[ValStepOutput], **kwargs):
+        # write metric to train history
         self._reset(epoch)
+        # set to validation mode and add data from validation steps
         self._mode = "val"
         for res in data:
             self.metrics.update(loss=res.loss, logits=res.yhat, labels=res.y)
@@ -380,12 +383,18 @@ class NNXMetricTracker(Callback):
         epoch_output: EpochOutput,
         file_handler: FileHandler,
     ):
+        # write metric to train history if no validation
+        # else write metric to val history
         self._reset(epoch)
+        # set to train mode
         self._mode = "train"
 
     def on_train_end(self, pbar: tqdm, **kwargs):
         for k, v in self.history.items():
-            self.history[k] = np.array(v)
+            if not v:
+                del self.history[k]
+            else:
+                self.history[k] = np.array(v)
 
     @property
     def tracked_metrics(self) -> set[str]:
