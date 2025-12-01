@@ -293,6 +293,11 @@ class SingleBatchJaxLoader(JaxLoader):
             data=data, batch_size=1, sharding=sharding, seed=seed, **kwargs
         )
 
+    def _get_batch(
+        self, indices: NDArray, idx: int
+    ) -> dict[str, Array | NDArray]:
+        return {key: self._data[key] for key in self._data}
+
     def _set_batch_size(self, batch_size):
         """Force the internal batch size to match the dataset length."""
         if batch_size != 1:

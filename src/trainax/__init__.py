@@ -9,16 +9,18 @@ from trainax._callbacks import (
     PbarHandler,
 )
 from trainax._dataloader import JaxLoader, SingleBatchJaxLoader
-from trainax._trainer import Trainer
+from trainax._trainer import EQXTrainer, NNXTrainer, Trainer
 from trainax._types import StepOutput, ValStepOutput
 
 __all__ = [
     "BestModelSaver",
     "Callback",
     "EpochLogger",
+    "EQXTrainer",
     "JaxLoader",
     "LossMetricTracker",
     "NNXMetricTracker",
+    "NNXTrainer",
     "PbarHandler",
     "SingleBatchJaxLoader",
     "StepOutput",
