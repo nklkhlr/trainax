@@ -224,10 +224,9 @@ class Trainer(ABC):
     ) -> list[ValStepOutput]:
         step_results: list[ValStepOutput] = []
 
-        for callback in self.callbacks.values():
-            callback.on_val_start(epoch=epoch, loader=valloader)
-
         if epoch % self.val_every == 0 and valloader is not None:
+            for callback in self.callbacks.values():
+                callback.on_val_start(epoch=epoch, loader=valloader)
             pbar = self._val_pbar or self._step_pbar(
                 valloader, desc="Validation steps"
             )
@@ -238,8 +237,8 @@ class Trainer(ABC):
                 pbar.update(1)
             pbar.refresh()
 
-        for callback in self.callbacks.values():
-            callback.on_val_end(epoch=epoch, data=step_results)
+            for callback in self.callbacks.values():
+                callback.on_val_end(epoch=epoch, data=step_results)
 
         return step_results
 

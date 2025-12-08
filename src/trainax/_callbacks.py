@@ -359,6 +359,7 @@ class NNXMetricTracker(Callback):
 
     def _reset(self, epoch: int):
         for metric, value in self.metrics.compute().items():
+            # print(f"{metric} ({self._mode}): {value.item()}")
             self.history[f"{self._mode}_{metric}"].append([epoch, value.item()])
 
     def on_train_step_end(self, step_output: StepOutput, **kwargs):
