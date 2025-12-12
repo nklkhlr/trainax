@@ -391,11 +391,14 @@ class NNXMetricTracker(Callback):
         self._mode = "train"
 
     def on_train_end(self, pbar: tqdm, **kwargs):
+        to_remove = []
         for k, v in self.history.items():
             if not v:
-                del self.history[k]
+                to_remove.append(k)
             else:
                 self.history[k] = np.array(v)
+        for k in to_remove:
+            del self.history[k]
 
     @property
     def tracked_metrics(self) -> set[str]:
