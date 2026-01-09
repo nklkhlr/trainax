@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, Literal
+import pickle
 
 import jax
 import jax.sharding as jsd
@@ -319,6 +320,22 @@ class Trainer(ABC):
     def _train_mode(model: Callable[..., Any], **kwargs) -> Callable[..., Any]:
         """Set model in training mode."""
         pass
+
+    def save(self, file_path: str) -> None:
+        """
+        Save the trainer instance to a given directory.
+
+        Parameters
+        ----------
+        file_path: str
+            File to save the trainer instance.
+
+        Returns
+        -------
+        None
+        """
+        with open(file_path, "wb") as file:
+            pickle.dump(self, file)
 
     def train(
         self,
