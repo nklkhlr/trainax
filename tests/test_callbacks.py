@@ -1,7 +1,7 @@
+import io
 import logging
 from pathlib import Path
 
-import io
 import numpy as np
 import pytest
 
@@ -134,7 +134,7 @@ def test_loss_metric_tracker_write_loss_errors():
 def test_best_model_saver_tracks_minimum():
     saved: list[int] = []
 
-    def save_model(model):
+    def save_model(model, *args, **kwargs):
         saved.append(model)
 
     saver = BestModelSaver(save_model)
@@ -168,7 +168,7 @@ def test_best_model_saver_tracks_minimum():
 def test_best_model_saver_max_criterion():
     saved: list[int] = []
 
-    def save_model(model):
+    def save_model(model, *args, **kwargs):
         saved.append(model)
 
     saver = BestModelSaver(save_model, criterion="max", key="train_loss")
@@ -240,7 +240,7 @@ def test_best_model_saver_missing_metric_key():
 def test_best_model_saver_metric_key_success():
     saved: list[str] = []
 
-    def save_model(model):
+    def save_model(model, *args, **kwargs):
         saved.append(model)
 
     saver = BestModelSaver(save_model, key="accuracy")
