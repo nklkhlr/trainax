@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable
-from typing import Any, Literal, TextIO
+from pathlib import Path
+from typing import Any, Literal, TextIO, Type
 
 import numpy as np
 from jaxtyping import Float, Int
@@ -307,7 +308,7 @@ class BestModelSaver(Callback):
         try:
             if self._criterion(new_val, self._best_val):
                 self._best_val = new_val
-                self.save_model(model)
+                self.save_model(model, epoch=epoch)
         except TypeError as te:
             if new_val is None:
                 if self._key == "val_loss":
@@ -323,6 +324,147 @@ class BestModelSaver(Callback):
                     "'val_loss'."
                 ) from te
             raise te
+
+
+class NNXBestModelSaver(BestModelSaver):
+    """Save the best `flax.nnx` model state based on a given criterion.
+
+    .. Note::
+       This callback requires the `flax` and `orbax` packages to be installed.
+
+    This callback is a subclass of :py:class:`trainax.callbacks.BestModelSaver`.
+    It saves the best model state based on a given criterion. The saved
+    model is defined by the `save_file` attribute.
+
+    Parameters
+    ----------
+    save_path : str or Path
+        Path to the directory where the best model will be saved.
+    name : str, optional
+        The name of the callback, by default "NNXBestModelSaver"
+    key : Literal["train_loss", "val_loss"] or str, optional
+        The key to use to save the best model, by default "val_loss"
+    criterion : Literal["min", "max"] or Callable[[float, float], bool], optional
+        Criterion used to determine best model. If a callable is provided,
+        the function needs to be of the form
+        f(new, old) -> bool[<new is better>]
+
+    Attributes
+    ----------
+    save_file : Path
+        Path to the file where the best model will be saved.
+
+    """
+
+    save_file: Path
+
+    def __init__(
+        self,
+        save_path: str | Path,
+        name: str = "NNXBestModelSaver",
+        key: Literal["train_loss", "val_loss"] | str = "val_loss",
+        criterion: Literal["min", "max"] = "min",
+    ):
+        try:
+            from flax import nnx
+        except ImportError as ie:
+            raise ImportError(
+                "NNXBestModelSaver requires flax (and orbax) to be installed."
+            ) from ie
+
+        try:
+            import orbax.checkpoint as ocp
+        except ImportError as ie:
+            raise ImportError(
+                "NNXBestModelSaver requires orbax to be installed"
+            ) from ie
+
+        super().__init__(self._save_model, name, key, criterion)
+        self.save_file = Path(save_path) / "best_model"
+
+    def _save_model(self, model, *args, **kwargs):
+        from flax import nnx
+        import orbax.checkpoint as ocp
+
+        state = nnx.state(model)
+        pure_dict_state = nnx.to_pure_dict(state)
+        checkpointer = ocp.StandardCheckpointer()
+        checkpointer.save(self.save_file, pure_dict_state)
+
+    @staticmethod
+    def load_model(
+        save_file: str | Path, model_cls, init_params: dict[str, Any] | None
+    ):
+        from flax import nnx
+        import orbax.checkpoint as ocp
+
+        checkpointer = ocp.StandardCheckpointer()
+        restored_state = checkpointer.restore(save_file)
+
+        if isinstance(model_cls, nnx.Module):
+            return nnx.update(model_cls, restored_state)
+
+        abstract_model = nnx.eval_shape(lambda: model_cls(**init_params))
+        graphdef, abstract_state = nnx.split(abstract_model)
+        nnx.replace_by_pure_dict(abstract_state, restored_state)
+        return nnx.merge(graphdef, abstract_state)
+
+
+class EQXBestModelSaver(BestModelSaver):
+    """Save the best `equinox` model state based on a given criterion.
+
+    .. Note::
+       This callback requires the `equinox` package to be installed.
+
+    This callback is a subclass of :py:class:`trainax.callbacks.BestModelSaver`.
+    It saves the best model state based on a given criterion. The saved
+    model is defined by the `save_file` attribute.
+
+    Parameters
+    ----------
+    save_path : str | Path
+        Path to the directory where the best model will be saved.
+    name : str, optional
+        The name of the callback, by default "EQXBestModelSaver"
+    key : Literal["train_loss", "val_loss"] | str, optional
+        The key to use to save the best model, by default "val_loss"
+    criterion : Literal["min", "max"] | Callable[[float, float], bool], optional
+        Criterion used to determine best model. If a callable is provided,
+        the function needs to be of the form
+        f(new, old) -> bool[<new is better>]
+
+    Attributes
+    ----------
+    save_file : Path
+        Path to the file where the best model will be saved.
+
+    """
+
+    save_file: Path
+
+    def __init__(
+        self,
+        save_path: str | Path,
+        name: str = "EQXBestModelSaver",
+        key: Literal["train_loss", "val_loss"] | str = "val_loss",
+        criterion: Literal["min", "max"] = "min",
+    ):
+        super().__init__(self._save_model, name, key, criterion)
+        self.save_file = Path(save_path) / "best_model"
+
+    @staticmethod
+    def _save_model(model, *args, **kwargs):
+        import equinox as eqx
+
+        raise NotImplementedError
+
+    @staticmethod
+    def load_model(
+        save_file: str | Path, model_cls, init_params: dict[str, Any] | None
+    ):
+        import equinox as eqx
+
+        raise NotImplementedError
 
 
 class NNXMetricTracker(Callback):
@@ -420,6 +562,9 @@ class NNXMetricTracker(Callback):
                 f"Metric {key.split('_')[1]} is not tracked by NNXMetricTracker"
                 f". Tracked metrics: {list(self.tracked_metrics)}"
             ) from ke
+
+    def plot_loss(self, **kwargs):
+        return self.plot_metric("loss", **kwargs)
 
     def plot_metric(self, metric: str, **kwargs):
         try:
