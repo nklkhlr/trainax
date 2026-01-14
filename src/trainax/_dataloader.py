@@ -77,7 +77,8 @@ class JaxLoader:
         if self._batch_size > len(self._data[self._x_key]):
             warnings.warn(
                 f"Batch size ({batch_size}) is larger than dataset size "
-                f"{len(self._data['x'])}. Setting batch size to dataset size.",
+                f"{len(self._data[self._x_key])}. Setting batch size to "
+                "dataset size.",
                 UserWarning,
                 stacklevel=2,
             )
