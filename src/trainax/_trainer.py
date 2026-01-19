@@ -10,6 +10,7 @@ import jax.sharding as jsd
 import numpy as np
 from jaxtyping import Array, PyTree
 from numpy.typing import NDArray
+import matplotlib.pyplot as plt
 from optax import GradientTransformation
 from tqdm.auto import tqdm
 from tqdm.rich import tqdm as rich_tqdm
@@ -517,6 +518,15 @@ class EQXTrainer(Trainer):
             data_sharding=data_sharding,
             aggregate_steps=aggregate_steps,
         )
+
+    def get_callback(self, name: str) -> Callback:
+        try:
+            return self.callbacks[name]
+        except KeyError as ke:
+            raise KeyError(
+                f"Unknown callback {name}. Available options are "
+                f"{list(self.callbacks.keys())}"
+            ) from ke
 
     @staticmethod
     def _optim_init(

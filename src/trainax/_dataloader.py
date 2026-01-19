@@ -74,18 +74,18 @@ class JaxLoader:
     def _set_batch_size(self, batch_size):
         self._batch_size = batch_size
 
-        if self._batch_size > len(self._data[self._x_key]):
+        if self._batch_size > self.n_points:
             warnings.warn(
                 f"Batch size ({batch_size}) is larger than dataset size "
-                f"{len(self._data[self._x_key])}. Setting batch size to "
+                f"{self.n_points}. Setting batch size to "
                 "dataset size.",
                 UserWarning,
                 stacklevel=2,
             )
-            self._batch_size = len(self._data[self._x_key])
+            self._batch_size = self.n_points
         else:
-            self._n_batches = len(self._data[self._x_key]) // batch_size
-            if len(self._data[self._x_key]) % batch_size != 0:
+            self._n_batches = self.n_points // batch_size
+            if self.n_points % batch_size != 0:
                 warnings.warn(
                     f"Batch size ({batch_size}) is not a multiple of dataset "
                     f"size {len(self._data['x'])}. Dropping last batch "

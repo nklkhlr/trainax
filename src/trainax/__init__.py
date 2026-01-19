@@ -5,6 +5,7 @@ from trainax._callbacks import (
     Callback,
     EpochLogger,
     LossMetricTracker,
+    NNXBestModelSaver,
     NNXMetricTracker,
     PbarHandler,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "EQXTrainer",
     "JaxLoader",
     "LossMetricTracker",
+    "NNXBestModelSaver",
     "NNXMetricTracker",
     "NNXTrainer",
     "PbarHandler",
