@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, TextIO, Type
+from typing import Any, Literal, TextIO
 
 import numpy as np
 from jaxtyping import Float, Int
@@ -383,23 +383,23 @@ class NNXBestModelSaver(BestModelSaver):
         self.save_file = Path(save_path) / "best_model"
 
     def _save_model(self, model, *args, **kwargs):
-        from flax import nnx
         import orbax.checkpoint as ocp
+        from flax import nnx
 
         state = nnx.state(model)
         pure_dict_state = nnx.to_pure_dict(state)
-        checkpointer = ocp.StandardCheckpointer()
-        checkpointer.save(self.save_file, pure_dict_state)
+        with ocp.StandardCheckpointer() as checkpointer:
+            checkpointer.save(self.save_file, pure_dict_state)
 
     @staticmethod
     def load_model(
         save_file: str | Path, model_cls, init_params: dict[str, Any] | None
     ):
-        from flax import nnx
         import orbax.checkpoint as ocp
+        from flax import nnx
 
-        checkpointer = ocp.StandardCheckpointer()
-        restored_state = checkpointer.restore(save_file)
+        with ocp.StandardCheckpointer() as checkpointer:
+            restored_state = checkpointer.restore(save_file)
 
         if isinstance(model_cls, nnx.Module):
             return nnx.update(model_cls, restored_state)
@@ -454,16 +454,12 @@ class EQXBestModelSaver(BestModelSaver):
 
     @staticmethod
     def _save_model(model, *args, **kwargs):
-        import equinox as eqx
-
         raise NotImplementedError
 
     @staticmethod
     def load_model(
         save_file: str | Path, model_cls, init_params: dict[str, Any] | None
     ):
-        import equinox as eqx
-
         raise NotImplementedError
 
 
