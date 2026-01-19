@@ -1,7 +1,9 @@
+import os
+import pickle
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal
-import pickle
 
 import jax
 import jax.sharding as jsd
@@ -321,7 +323,7 @@ class Trainer(ABC):
         """Set model in training mode."""
         pass
 
-    def save(self, file_path: str) -> None:
+    def save(self, file_path: str | os.PathLike | Path) -> None:
         """
         Save the trainer instance to a given directory.
 
