@@ -636,8 +636,13 @@ class NNXTrainer(Trainer):
                 "`pip install <trainax[flax]|trainax[all]|flax`."
             ) from ie
 
+        if data_sharding is None:
+            jit_fun = self._jit_no_sharding
+        else:
+            jit_fun = self._jit_sharding
+
         super().__init__(
-            nnx.jit,
+            jit_fun,
             n_epochs=n_epochs,
             callbacks=callbacks,
             continuous_files=continuous_files,
@@ -649,6 +654,34 @@ class NNXTrainer(Trainer):
         )
 
     @staticmethod
+    def _jit_no_sharding(fun):
+        from flax import nnx
+
+        return nnx.jit(fun, donate_argnames=("model", "optimizer"))
+
+    def _jit_sharding(self, fun):
+        from flax import nnx
+
+        return nnx.jit(
+            fun,
+            # TODO: double check donate_argnames
+            donate_argnames=("model_", "opt_state_"),
+            in_shardings=self._sharding["data"],
+        )
+
+    def _set_sharding(
+        self,
+        sharding: list[int] | int | jsd.NamedSharding | None,
+        kind: Literal["data", "model"],
+    ):
+        super()._set_sharding(sharding, kind)
+        if kind == "data":
+            if sharding is None:
+                self._jit_fun = self._jit_no_sharding
+            else:
+                self._jit_fun = self._jit_sharding
+
+    @staticmethod
     def _optim_init(
         optim: GradientTransformation,
         model: Callable[..., Any],
@@ -656,6 +689,11 @@ class NNXTrainer(Trainer):
         from flax import nnx
 
         return nnx.ModelAndOptimizer(model, optim)  # type: ignore
+
+    def _prep_data(
+        self, trainloader: JaxLoader, valloader: JaxLoader | None
+    ) -> tuple[JaxLoader, JaxLoader | None]:
+        return trainloader, valloader
 
     @staticmethod
     def _setup_step_fun(
