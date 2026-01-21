@@ -10,7 +10,6 @@ import jax.sharding as jsd
 import numpy as np
 from jaxtyping import Array, PyTree
 from numpy.typing import NDArray
-import matplotlib.pyplot as plt
 from optax import GradientTransformation
 from tqdm.auto import tqdm
 from tqdm.rich import tqdm as rich_tqdm
@@ -186,7 +185,11 @@ class Trainer(ABC):
         """dict[str, Sharding | None]: Current data/model sharding settings."""
         return self._sharding
 
-    def set_sharding(self, sharding, kind: Literal["data", "model"]):
+    def set_sharding(
+        self,
+        sharding: list[int] | int | jsd.NamedSharding,
+        kind: Literal["data", "model"],
+    ):
         """Set data/model sharding."""
         # TODO: note that if sharding is int or list[int] only single dimension
         # sharding is supported
