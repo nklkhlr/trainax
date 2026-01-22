@@ -122,6 +122,10 @@ class JaxLoader:
         """
         return self._batch_size
 
+    @batch_size.setter
+    def batch_size(self, batch_size: int):
+        self._set_batch_size(batch_size)
+
     def set_batch_size(self, batch_size: int):
         """Set a new batch size for the loader.
 
