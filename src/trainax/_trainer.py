@@ -419,6 +419,9 @@ class Trainer(ABC):
                 )
                 epoch_data.append(output)
 
+                del data
+                output.to_cpu()
+
                 self._invoke_callbacks(
                     event="train_step_end",
                     pbar=step_bar,

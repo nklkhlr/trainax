@@ -22,6 +22,10 @@ class StepOutput:
     state: PyTree | None = None
     metrics: dict[str, float] | PyTree | None = None
 
+    def to_cpu(self):
+        # TODO: go through all attributes recursively and move to cpu if jax
+        pass
+
 
 @dataclass
 class ValStepOutput:
@@ -31,6 +35,9 @@ class ValStepOutput:
     state: PyTree | None = None
     metrics: dict[str, float] | PyTree | None = None
 
+    def to_cpu(self):
+        # TODO: go through all attributes recursively and move to cpu if jax
+        pass
 
 @dataclass
 class EpochOutput:
