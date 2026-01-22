@@ -154,8 +154,8 @@ class Trainer(ABC):
             raise ValueError(
                 f"Invalid sharding kind: {kind}. Must be 'data' or 'model'"
             )
-        if kind == "model" and sharding is not None:
-            raise NotImplementedError("Model sharding is not yet supported")
+        # if kind == "model" and sharding is not None:
+        #     raise NotImplementedError("Model sharding is not yet supported")
 
         if sharding is None:
             self._sharding[kind] = None
@@ -264,10 +264,11 @@ class Trainer(ABC):
         self,
         valloader: JaxLoader | None,
         val_step: StateStepFun | StepFun | None,
+        model=None,
     ) -> StateStepFun | StepFun | None:
         if valloader is not None:
             if val_step is not None:
-                return self._jit_fun(val_step)
+                return self._jit_fun(val_step, model)
             raise ValueError(
                 "Validation loader provided but val_step is not defined. "
                 "Please set the validation step function "
@@ -393,13 +394,13 @@ class Trainer(ABC):
 
         trainloader, valloader = self._prep_data(trainloader, valloader)
 
-        step_fun = self._jit_fun(
-            self._setup_step_fun(train_step, optim, **kwargs)
+        step_fun, model = self._jit_fun(
+            self._setup_step_fun(train_step, optim, **kwargs), model
         )
         opt_state = self._optim_init(optim, model)
         state = train_state
 
-        val_step_fun = self._jit_val_step(valloader, val_step)
+        val_step_fun, model = self._jit_val_step(valloader, val_step, model)
         epoch_bar = self._epoch_pbar()
         step_bar = self._step_pbar(trainloader)
         for epoch in range(self.n_epochs):
@@ -476,6 +477,7 @@ class EQXTrainer(Trainer):
         model_sharding: list[int] | int | jsd.NamedSharding | None = None,
         data_sharding: list[int] | int | jsd.NamedSharding | None = None,
         aggregate_steps: Literal["mean", "min", "max"] = "mean",
+        jit_kwargs: dict[str, Any] | None = None,
     ):
         """Initialise a trainer instance for an equinox model.
 
@@ -500,6 +502,8 @@ class EQXTrainer(Trainer):
         aggregate_steps : {"mean", "min", "max"}, default="mean"
             Aggregation strategy used when reducing batch metrics to epoch
             summaries.
+        jit_kwargs: dict[str, Any] | None, None
+            Optional keyword arguments for `eqx.filter_jit`
         """
         try:
             import equinox as eqx
@@ -511,7 +515,7 @@ class EQXTrainer(Trainer):
             ) from ie
 
         super().__init__(
-            eqx.filter_jit,
+            lambda f, m: (eqx.filter_jit(f, **jit_kwargs or {}), m),
             n_epochs=n_epochs,
             callbacks=callbacks,
             continuous_files=continuous_files,
@@ -521,6 +525,17 @@ class EQXTrainer(Trainer):
             data_sharding=data_sharding,
             aggregate_steps=aggregate_steps,
         )
+
+    def _set_sharding(
+        self,
+        sharding: list[int] | int | jsd.NamedSharding | None,
+        kind: Literal["data", "model"],
+    ):
+        if kind == "model" and sharding is not None:
+            raise NotImplementedError(
+                "Model sharding is not yet supported in EQXTrainer"
+            )
+        super()._set_sharding(sharding, kind)
 
     def get_callback(self, name: str) -> Callback:
         try:
@@ -592,6 +607,8 @@ class EQXTrainer(Trainer):
 
 
 class NNXTrainer(Trainer):
+    _jit_kwargs: dict[str, Any]
+
     def __init__(
         self,
         n_epochs: int,
@@ -602,6 +619,7 @@ class NNXTrainer(Trainer):
         model_sharding: list[int] | int | jsd.NamedSharding | None = None,
         data_sharding: list[int] | int | jsd.NamedSharding | None = None,
         aggregate_steps: Literal["mean", "min", "max"] = "mean",
+        jit_kwargs: dict[str, Any] | None = None,
     ):
         """Initialise a trainer instance for a flax.nnx model.
 
@@ -626,6 +644,8 @@ class NNXTrainer(Trainer):
         aggregate_steps : {"mean", "min", "max"}, default="mean"
             Aggregation strategy used when reducing batch metrics to epoch
             summaries.
+        jit_kwargs: dict[str, Any] | None, None
+            Optional keyword arguments for `nnx.filter_jit`
         """
         try:
             from flax import nnx
@@ -635,6 +655,10 @@ class NNXTrainer(Trainer):
                 "Install with either of "
                 "`pip install <trainax[flax]|trainax[all]|flax`."
             ) from ie
+
+        # TODO: how to put memory donation back in?
+        # _default_jit_kwargs = {"donate_argnames": ("model_", "opt_state_")}
+        self._jit_kwargs = jit_kwargs or {}
 
         if data_sharding is None:
             jit_fun = self._jit_no_sharding
@@ -653,21 +677,45 @@ class NNXTrainer(Trainer):
             aggregate_steps=aggregate_steps,
         )
 
-    @staticmethod
-    def _jit_no_sharding(fun):
+    def _jit_no_sharding(self, fun, model):
         from flax import nnx
 
-        return nnx.jit(fun, donate_argnames=("model", "optimizer"))
+        return nnx.jit(fun, **self._jit_kwargs), model
 
-    def _jit_sharding(self, fun):
+    def _jit_sharding(self, fun, model):
         from flax import nnx
+
+        if self.sharding.get("model"):
+            sharding = self.sharding["model"]
+        elif self.sharding.get("data"):
+            sharding = self.sharding["data"]
+        else:
+            raise AttributeError(
+                "Excpected sharding to be set but could not find sharding. "
+                "This is an internal error, please report on GitHub."
+            )
+        if isinstance(sharding, jsd.SingleDeviceSharding):
+            mesh = jax.make_mesh(
+                axis_shapes=(1,),
+                axis_names=("model",),
+                devices=list(sharding.device_set)[0],
+            )
+        else:
+            mesh = sharding.mesh
+
+        @nnx.jit
+        def jit_shard(module):
+            state = nnx.state(module)
+            pspecs = nnx.get_partition_spec(state)
+            with mesh:
+                sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
+            nnx.update(module, sharded_state)
+            return module
 
         return nnx.jit(
             fun,
-            # TODO: double check donate_argnames
-            donate_argnames=("model_", "opt_state_"),
-            in_shardings=self._sharding["data"],
-        )
+            **self._jit_kwargs,
+        ), jit_shard(model)
 
     def _set_sharding(
         self,
@@ -675,11 +723,10 @@ class NNXTrainer(Trainer):
         kind: Literal["data", "model"],
     ):
         super()._set_sharding(sharding, kind)
-        if kind == "data":
-            if sharding is None:
-                self._jit_fun = self._jit_no_sharding
-            else:
-                self._jit_fun = self._jit_sharding
+        if self.sharding.get("model") or self.sharding.get("data"):
+            self._jit_fun = self._jit_sharding
+        else:
+            self._jit_fun = self._jit_no_sharding
 
     @staticmethod
     def _optim_init(
@@ -689,11 +736,6 @@ class NNXTrainer(Trainer):
         from flax import nnx
 
         return nnx.ModelAndOptimizer(model, optim)  # type: ignore
-
-    def _prep_data(
-        self, trainloader: JaxLoader, valloader: JaxLoader | None
-    ) -> tuple[JaxLoader, JaxLoader | None]:
-        return trainloader, valloader
 
     @staticmethod
     def _setup_step_fun(
