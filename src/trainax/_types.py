@@ -4,18 +4,22 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 
 import numpy as np
-import jax
 from jax.tree_util import register_dataclass, tree_map
 from jaxtyping import Array, Float, PyTree
 from numpy.typing import NDArray
-
 
 PathLike = os.PathLike | Path | str
 
 
 def _dataclass_pytrees_to_cpu(inst):
+    def _to_numpy_python(arr: Array) -> NDArray | float | int:
+        try:
+            return arr.item()
+        except ValueError:
+            return np.array(arr)
+
     cpu_inst = tree_map(
-        lambda x: jax.device_put(x, jax.devices("cpu")[0]),
+        _to_numpy_python,
         inst,
         is_leaf=lambda x: isinstance(x, Array),
     )

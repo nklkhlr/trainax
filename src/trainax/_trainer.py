@@ -755,6 +755,7 @@ class NNXTrainer(Trainer):
                 )
 
             opt_state_.update(out.gradients)
+
             return model_, out, opt_state_, out.state  # type: ignore
 
         return _fun
