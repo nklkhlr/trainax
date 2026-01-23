@@ -35,13 +35,6 @@ StateStepFun = Callable[
 ]
 
 
-# TODO:
-# * make trainer abstract base class
-# * implement equinox subclass
-# * implement flax.nnx subclass
-# => lazy loading of equinox/flax
-
-
 class Trainer(ABC):
     """Main training handler.
 
@@ -240,6 +233,7 @@ class Trainer(ABC):
             pbar.reset(total=len(valloader))
             for data in valloader:
                 output = val_step(model, data, **kwargs)
+                output.to_cpu()
                 step_results.append(output)  # type: ignore[arg-type]
                 pbar.update(1)
             pbar.refresh()
@@ -417,10 +411,10 @@ class Trainer(ABC):
                 model, output, opt_state, state = step_fun(
                     model, data, opt_state, state
                 )
-                epoch_data.append(output)
-
-                del data
                 output.to_cpu()
+                del data
+
+                epoch_data.append(output)
 
                 self._invoke_callbacks(
                     event="train_step_end",

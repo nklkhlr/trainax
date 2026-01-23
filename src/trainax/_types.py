@@ -1,16 +1,26 @@
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import numpy as np
-from jax.tree_util import register_dataclass
+import jax
+from jax.tree_util import register_dataclass, tree_map
 from jaxtyping import Array, Float, PyTree
 from numpy.typing import NDArray
 
-# from pydantic.dataclasses import dataclass
 
 PathLike = os.PathLike | Path | str
+
+
+def _dataclass_pytrees_to_cpu(inst):
+    cpu_inst = tree_map(
+        lambda x: jax.device_put(x, jax.devices("cpu")[0]),
+        inst,
+        is_leaf=lambda x: isinstance(x, Array),
+    )
+    for field in fields(inst):
+        setattr(inst, field.name, getattr(cpu_inst, field.name))
 
 
 @dataclass
@@ -23,8 +33,7 @@ class StepOutput:
     metrics: dict[str, float] | PyTree | None = None
 
     def to_cpu(self):
-        # TODO: go through all attributes recursively and move to cpu if jax
-        pass
+        _dataclass_pytrees_to_cpu(self)
 
 
 @dataclass
@@ -36,8 +45,8 @@ class ValStepOutput:
     metrics: dict[str, float] | PyTree | None = None
 
     def to_cpu(self):
-        # TODO: go through all attributes recursively and move to cpu if jax
-        pass
+        _dataclass_pytrees_to_cpu(self)
+
 
 @dataclass
 class EpochOutput:
