@@ -21,10 +21,22 @@ class Callback:
     """Minimal base class for Trainax callbacks."""
 
     name: str
+    _val_every: int
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, val_every: int = 1):
         """Assign a unique `name` used for registry lookups."""
         self.name = name
+        self.val_every = val_every
+
+    @property
+    def val_every(self) -> int:
+        """Return the validation frequency."""
+        return self._val_every
+
+    @val_every.setter
+    def val_every(self, val_every: int):
+        """Set the validation frequency."""
+        self._val_every = val_every
 
     # TODO: define interfaces for missing methods
     def on_epoch_start(self, *args, **kwargs):
@@ -230,6 +242,7 @@ class BestModelSaver(Callback):
         name: str = "BestModelSaver",
         key: Literal["train_loss", "val_loss"] | str = "val_loss",
         criterion: Literal["min", "max"] = "min",
+        val_every: int = 1,
     ):
         """Initialize callback to save best model state.
 
@@ -243,6 +256,8 @@ class BestModelSaver(Callback):
             Criterion used to determine best model. If a callable is provided,
             the function needs to be of the form
             f(new, old) -> bool[<new is better>]
+        val_every : int, optional
+            How often to evaluate the model, by default 1
         """
         super().__init__(name)
 
@@ -304,6 +319,9 @@ class BestModelSaver(Callback):
         file_handler: FileHandler,
     ):
         """Evaluate the metric and optionally trigger a model save."""
+        if epoch % self.val_every != 0 and self.key.startswith("val"):
+            return
+
         new_val = self._get_val(epoch_output)
         try:
             if self._criterion(new_val, self._best_val):

@@ -376,12 +376,16 @@ class Trainer(ABC):
             The updated model and final training state (if present).
         """
         agg_fun = self._agg_funs[self._aggregate_steps]
-        if valloader is not None and val_step is None:
-            raise ValueError(
-                "'valloader' provided but val_step is not defined. "
-                "Please set the validation step function "
-                "(Trainer.val_step)."
-            )
+        if valloader is not None:
+            if val_step is None:
+                raise ValueError(
+                    "'valloader' provided but val_step is not defined. "
+                    "Please set the validation step function "
+                    "(Trainer.val_step)."
+                )
+            for callback in self.callbacks.values():
+                callback.val_every = self.val_every
+
         self._val_pbar = None
 
         self.file_handler.open()
