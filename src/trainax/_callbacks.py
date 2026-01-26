@@ -231,8 +231,10 @@ class BestModelSaver(Callback):
     """Checkpoint best model."""
 
     save_model: Callable[..., Any]
+    val_every: int
     _key: str
     _best_val: float
+    _best_iter: int | None
     _get_val: Callable[[EpochOutput], float]
     _criterion: Callable[[float, float], bool]
 
@@ -262,21 +264,35 @@ class BestModelSaver(Callback):
         super().__init__(name)
 
         self.save_model = save_fun
-        self.set_key(key)
+        self.key = key
+        self.val_every = val_every
 
         match criterion:
             case "min":
                 self._criterion = lambda x, y: x < y
                 self._best_val = np.inf
+                self._best_iter = None
             case "max":
                 self._criterion = lambda x, y: x > y
                 self._best_val = -np.inf
+                self._best_iter = None
             case _:
                 raise ValueError(f"Invalid criterion: {criterion}")
 
     @property
     def key(self):
         return self._key
+
+    @key.setter
+    def key(self, key: str):
+        self.set_key(key)
+
+    @property
+    def best_value(self) -> float:
+        return self._best_val
+
+    def best_epoch(self) -> int:
+        return self._best_iter
 
     def set_key(self, key: str):
         """Change the metric key used to evaluate model quality."""
@@ -326,6 +342,7 @@ class BestModelSaver(Callback):
         try:
             if self._criterion(new_val, self._best_val):
                 self._best_val = new_val
+                self._best_iter = epoch
                 self.save_model(model, epoch=epoch)
         except TypeError as te:
             if new_val is None:
@@ -366,6 +383,10 @@ class NNXBestModelSaver(BestModelSaver):
         Criterion used to determine best model. If a callable is provided,
         the function needs to be of the form
         f(new, old) -> bool[<new is better>]
+    force_overwrite: bool, False
+        Whether to overwrite an existing storage in case it already exists in
+        `save_path`.
+
 
     Attributes
     ----------
@@ -382,6 +403,8 @@ class NNXBestModelSaver(BestModelSaver):
         name: str = "NNXBestModelSaver",
         key: Literal["train_loss", "val_loss"] | str = "val_loss",
         criterion: Literal["min", "max"] = "min",
+        val_every: int = 1,
+        force_overwrite: bool = False,
     ):
         try:
             from flax import nnx
@@ -397,8 +420,17 @@ class NNXBestModelSaver(BestModelSaver):
                 "NNXBestModelSaver requires orbax to be installed"
             ) from ie
 
-        super().__init__(self._save_model, name, key, criterion)
+        super().__init__(self._save_model, name, key, criterion, val_every)
         self.save_file = Path(save_path) / "best_model"
+
+        if self.save_file.exists():
+            if not force_overwrite:
+                raise ValueError(
+                    f"Storage location {str(self.save_file)} already exists. "
+                    "Either choose a different location or set "
+                    "`force_overwrite=True` to overwrite the existing storage."
+                )
+            self.save_file.unlink()
 
     def _save_model(self, model, *args, **kwargs):
         import orbax.checkpoint as ocp
@@ -407,7 +439,7 @@ class NNXBestModelSaver(BestModelSaver):
         state = nnx.state(model)
         pure_dict_state = nnx.to_pure_dict(state)
         with ocp.StandardCheckpointer() as checkpointer:
-            checkpointer.save(self.save_file, pure_dict_state)
+            checkpointer.save(self.save_file, pure_dict_state, force=True)
 
     @staticmethod
     def load_model(
