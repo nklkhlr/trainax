@@ -280,19 +280,20 @@ class BestModelSaver(Callback):
                 raise ValueError(f"Invalid criterion: {criterion}")
 
     @property
+    def best_value(self) -> float:
+        return self._best_val
+
+    @property
+    def best_epoch(self) -> int:
+        return self._best_iter
+
+    @property
     def key(self):
         return self._key
 
     @key.setter
     def key(self, key: str):
         self.set_key(key)
-
-    @property
-    def best_value(self) -> float:
-        return self._best_val
-
-    def best_epoch(self) -> int:
-        return self._best_iter
 
     def set_key(self, key: str):
         """Change the metric key used to evaluate model quality."""
