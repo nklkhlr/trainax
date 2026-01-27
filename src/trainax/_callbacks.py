@@ -2,6 +2,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, TextIO
+import shutil
 
 import numpy as np
 from jaxtyping import Float, Int
@@ -431,7 +432,10 @@ class NNXBestModelSaver(BestModelSaver):
                     "Either choose a different location or set "
                     "`force_overwrite=True` to overwrite the existing storage."
                 )
-            self.save_file.unlink()
+            if self.save_file.is_dir():
+                shutil.rmtree(self.save_file, ignore_errors=True)
+            else:
+                self.save_file.unlink()
 
     def _save_model(self, model, *args, **kwargs):
         import orbax.checkpoint as ocp
