@@ -366,6 +366,7 @@ class Trainer(ABC):
         val_step: StepFun | None,
         valloader: JaxLoader | None,
         train_state: PyTree | None = None,
+        keep_gradients: bool = False,
         **kwargs,
     ) -> TrainOutput:
         """Execute the training loop and return the updated model/state.
@@ -388,6 +389,8 @@ class Trainer(ABC):
             Validation loader yielding batches; ignored when ``None``.
         train_state : PyTree | None, optional
             Initial mutable state (e.g. BatchNorm statistics) for training.
+        keep_gradients: bool, False
+            Whether to retain gradients beyond the batch step.
 
         Returns
         -------
@@ -437,14 +440,18 @@ class Trainer(ABC):
                 output.to_cpu()
                 del data
 
-                epoch_data.append(output)
-
                 self._invoke_callbacks(
                     event="train_step_end",
                     pbar=step_bar,
                     step_output=output,
                 )
+
+                if not keep_gradients:
+                    output.gradients = None
+                epoch_data.append(output)
+
                 step_bar.update(1)
+
             step_bar.refresh()
 
             val_outputs: list[ValStepOutput] | None = None
