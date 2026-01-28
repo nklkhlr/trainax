@@ -2,6 +2,7 @@ import os
 import pickle
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Literal
 
@@ -52,6 +53,9 @@ class Trainer(ABC):
         Frequency (in epochs) for running validation steps.
     use_rich : bool
         Enable rich progress bars when available.
+    epoch_state_file: Path | None
+        File path to save the trainer state after each epoch. If None, the
+        state is not saved during training.
     """
 
     callbacks: dict[str, Callback]
@@ -60,6 +64,7 @@ class Trainer(ABC):
     n_epochs: int
     val_every: int
     use_rich: bool
+    epoch_state_file: Path | None
 
     _agg_funs: dict[str, Callable] = {
         "mean": np.nanmean,
@@ -82,6 +87,7 @@ class Trainer(ABC):
         model_sharding: list[int] | int | jsd.NamedSharding | None = None,
         data_sharding: list[int] | int | jsd.NamedSharding | None = None,
         aggregate_steps: Literal["mean", "min", "max"] = "mean",
+        epoch_state_file: str | None = None,
     ):
         """Initialise a trainer instance.
 
@@ -94,18 +100,21 @@ class Trainer(ABC):
         continuous_files : dict[str, PathLike], optional
             Mapping of callback keys to open file paths managed by
             :class:`~trainax._file_handler.FileHandler`.
-        val_every : int, default=5
+        val_every : int, 5
             Frequency (in epochs) for running validation steps.
-        use_rich : bool, default=True
+        use_rich : bool, True
             Enable rich progress bars when available.
         model_sharding : list[int] | int | jsd.NamedSharding | None, optional
             Placeholder for future model sharding support. Any non-``None``
             value currently raises an Exception.
         data_sharding : list[int] | int | jsd.NamedSharding | None, optional
             Sharding applied to provided data loaders.
-        aggregate_steps : {"mean", "min", "max"}, default="mean"
+        aggregate_steps : {"mean", "min", "max"}, "mean"
             Aggregation strategy used when reducing batch metrics to epoch
             summaries.
+        epoch_state_file: str, optional
+            Path to save the trainer state after each epoch. If None, the state
+            is not saved during training.
         """
         self._jit_fun = _jit_fun
 
@@ -115,6 +124,16 @@ class Trainer(ABC):
         self.n_epochs = n_epochs
         self.val_every = val_every
         self.use_rich = use_rich
+
+        if epoch_state_file is not None:
+            self.epoch_state_file = Path(epoch_state_file)
+            if not self.epoch_state_file.parent.exists():
+                raise FileNotFoundError(
+                    f"Directory {self.epoch_state_file.parent} does not exist "
+                    "but was provided as parent to `epoch_state_file`."
+                )
+        else:
+            self.epoch_state_file = None
 
         self._sharding = {}
         self._set_sharding(model_sharding, "model")
@@ -398,7 +417,7 @@ class Trainer(ABC):
         opt_state = self._optim_init(optim, model)
         state = train_state
 
-        val_step_fun, model = self._jit_val_step(valloader, val_step, model)
+        val_step_fun, model = self._jit_val_step(valloader, val_step, model)  # type: ignore
         epoch_bar = self._epoch_pbar()
         step_bar = self._step_pbar(trainloader)
         for epoch in range(self.n_epochs):
@@ -455,6 +474,10 @@ class Trainer(ABC):
                 file_handler=self.file_handler,
             )
             epoch_bar.update(1)
+
+            if self.epoch_state_file is not None:
+                self.save(self.epoch_state_file)
+
         epoch_bar.refresh()
 
         self.file_handler.close()
@@ -479,6 +502,7 @@ class EQXTrainer(Trainer):
         data_sharding: list[int] | int | jsd.NamedSharding | None = None,
         aggregate_steps: Literal["mean", "min", "max"] = "mean",
         jit_kwargs: dict[str, Any] | None = None,
+        epoch_state_file: str | None = None,
     ):
         """Initialise a trainer instance for an equinox model.
 
@@ -491,20 +515,23 @@ class EQXTrainer(Trainer):
         continuous_files : dict[str, PathLike], optional
             Mapping of callback keys to open file paths managed by
             :class:`~trainax._file_handler.FileHandler`.
-        val_every : int, default=5
+        val_every : int, 5
             Frequency (in epochs) for running validation steps.
-        use_rich : bool, default=True
+        use_rich : bool, True
             Enable rich progress bars when available.
         model_sharding : list[int] | int | jsd.NamedSharding | None, optional
             Placeholder for future model sharding support. Any non-``None``
             value currently raises an Exception.
         data_sharding : list[int] | int | jsd.NamedSharding | None, optional
             Sharding applied to provided data loaders.
-        aggregate_steps : {"mean", "min", "max"}, default="mean"
+        aggregate_steps : {"mean", "min", "max"}, "mean"
             Aggregation strategy used when reducing batch metrics to epoch
             summaries.
         jit_kwargs: dict[str, Any] | None, None
             Optional keyword arguments for `eqx.filter_jit`
+        epoch_state_file: str, optional
+            File to save the trainer state after each epoch. If None, the state
+            is not saved during training.
         """
         try:
             import equinox as eqx
@@ -525,6 +552,7 @@ class EQXTrainer(Trainer):
             model_sharding=model_sharding,
             data_sharding=data_sharding,
             aggregate_steps=aggregate_steps,
+            epoch_state_file=epoch_state_file,
         )
 
     def _set_sharding(
@@ -621,6 +649,7 @@ class NNXTrainer(Trainer):
         data_sharding: list[int] | int | jsd.NamedSharding | None = None,
         aggregate_steps: Literal["mean", "min", "max"] = "mean",
         jit_kwargs: dict[str, Any] | None = None,
+        epoch_state_file: str | None = None,
     ):
         """Initialise a trainer instance for a flax.nnx model.
 
@@ -633,29 +662,30 @@ class NNXTrainer(Trainer):
         continuous_files : dict[str, PathLike], optional
             Mapping of callback keys to open file paths managed by
             :class:`~trainax._file_handler.FileHandler`.
-        val_every : int, default=5
+        val_every : int, 5
             Frequency (in epochs) for running validation steps.
-        use_rich : bool, default=True
+        use_rich : bool, True
             Enable rich progress bars when available.
         model_sharding : list[int] | int | jsd.NamedSharding | None, optional
             Placeholder for future model sharding support. Any non-``None``
             value currently raises an Exception.
         data_sharding : list[int] | int | jsd.NamedSharding | None, optional
             Sharding applied to provided data loaders.
-        aggregate_steps : {"mean", "min", "max"}, default="mean"
+        aggregate_steps : {"mean", "min", "max"}, "mean"
             Aggregation strategy used when reducing batch metrics to epoch
             summaries.
         jit_kwargs: dict[str, Any] | None, None
             Optional keyword arguments for `nnx.filter_jit`
+        epoch_state_file: str, False
+            File to save the trainer state after each epoch. If None, the state
+            is not saved during training.
         """
-        try:
-            from flax import nnx
-        except ImportError as ie:
+        if find_spec("flax") is None:
             raise ImportError(
                 "Flax must be installed to use NNXTrainer. "
                 "Install with either of "
-                "`pip install <trainax[flax]|trainax[all]|flax`."
-            ) from ie
+                "`pip install <trainax[flax]|trainax[all]`>."
+            )
 
         # TODO: how to put memory donation back in?
         # _default_jit_kwargs = {"donate_argnames": ("model_", "opt_state_")}
@@ -676,6 +706,7 @@ class NNXTrainer(Trainer):
             model_sharding=model_sharding,
             data_sharding=data_sharding,
             aggregate_steps=aggregate_steps,
+            epoch_state_file=epoch_state_file,
         )
 
     def _jit_no_sharding(self, fun, model):
@@ -702,7 +733,7 @@ class NNXTrainer(Trainer):
                 devices=list(sharding.device_set)[0],
             )
         else:
-            mesh = sharding.mesh
+            mesh = sharding.mesh  # type: ignore
 
         @nnx.jit
         def jit_shard(module):
