@@ -84,8 +84,8 @@ class Trainer(ABC):
         continuous_files: dict[str, PathLike] | None = None,
         val_every: int = 5,
         use_rich: bool = True,
-        model_sharding: list[int] | int | jsd.NamedSharding | None = None,
-        data_sharding: list[int] | int | jsd.NamedSharding | None = None,
+        model_sharding: int | list[jax.Device] | None = None,
+        data_sharding: int | list[jax.Device] | None = None,
         aggregate_steps: Literal["mean", "min", "max"] = "mean",
         epoch_state_file: str | None = None,
     ):
@@ -104,11 +104,10 @@ class Trainer(ABC):
             Frequency (in epochs) for running validation steps.
         use_rich : bool, True
             Enable rich progress bars when available.
-        model_sharding : list[int] | int | jsd.NamedSharding | None, optional
-            Placeholder for future model sharding support. Any non-``None``
-            value currently raises an Exception.
-        data_sharding : list[int] | int | jsd.NamedSharding | None, optional
-            Sharding applied to provided data loaders.
+        model_sharding : int | list[jax.Device], optional
+            Number of devices to shard model across
+        data_sharding : int | list[jax.Device], optional
+            Number of devices to shard data across
         aggregate_steps : {"mean", "min", "max"}, "mean"
             Aggregation strategy used when reducing batch metrics to epoch
             summaries.
@@ -141,6 +140,44 @@ class Trainer(ABC):
 
         self._aggregate_steps = aggregate_steps
 
+    def __getstate__(self):
+        if self._sharding:
+            mesh_shape = dict(
+                zip(
+                    self._sharding["data"].mesh.axis_names,
+                    self._sharding["data"].mesh.axis_sizes,
+                    strict=True,
+                )
+            )
+        else:
+            mesh_shape = None
+
+        return {
+            "callbacks": self.callbacks,
+            "file_handler": self.file_handler,
+            "n_epochs": self.n_epochs,
+            "val_every": self.val_every,
+            "use_rich": self.use_rich,
+            "epoch_state_file": self.epoch_state_file,
+            "agg_funs": self._agg_funs,
+            "aggregate_steps": self._aggregate_steps,
+            "mesh_shape": mesh_shape,
+            "jit_fun": self._jit_fun,
+            "val_pbar": self._val_pbar,
+        }
+
+    def __setstate__(self, state):
+        self.callbacks = state["callbacks"]
+        self.file_handler = state["file_handler"]
+        self.n_epochs = state["n_epochs"]
+        self.val_every = state["val_every"]
+        self.use_rich = state["use_rich"]
+        self.epoch_state_file = state["epoch_state_file"]
+        self.set_aggregate_steps(state["aggregate_steps"])
+
+        if mesh_shape := state["mesh_shape"] is not None:
+            self.sharding = mesh_shape
+
     @property
     def aggregate_steps(self):
         """str: Aggregation strategy applied to per-step metrics."""
@@ -159,36 +196,45 @@ class Trainer(ABC):
 
     def _set_sharding(
         self,
-        sharding: list[int] | int | jsd.NamedSharding | None,
-        kind: Literal["data", "model"],
+        devices: tuple[int, int] | tuple[list[jax.Device], list[jax.Device]],
     ):
-        if kind not in ["data", "model"]:
-            raise ValueError(
-                f"Invalid sharding kind: {kind}. Must be 'data' or 'model'"
-            )
-        # if kind == "model" and sharding is not None:
-        #     raise NotImplementedError("Model sharding is not yet supported")
-
-        if sharding is None:
-            self._sharding[kind] = None
-        elif isinstance(sharding, jsd.NamedSharding):
-            self._sharding[kind] = sharding
-        elif isinstance(sharding, list) and len(sharding) > 1:
-            devices = [jax.devices()[i] for i in sharding]
-            mesh = jax.make_mesh(
-                axis_shapes=(len(devices),),
-                axis_names=(kind,),
-                devices=devices,
-            )
-            self._sharding[kind] = jsd.NamedSharding(
-                mesh, jsd.PartitionSpec(kind)
-            )
+        if isinstance(devices[0], int):
+            mesh_shape = devices
+            devs = [jax.devices()[i] for i in range(sum(devices))]
         else:
-            if isinstance(sharding, list):
-                sharding = sharding[0]
-            self._sharding[kind] = jsd.SingleDeviceSharding(
-                jax.devices()[sharding]
-            )
+            mesh_shape = (len(devices[0]), len(devices[1]))
+            devs = devices[0] + devices[1]
+
+        mesh = jsd.Mesh(
+            jax.experimental.mesh_utils.create_device_mesh(
+                mesh_shape,
+                devices=devs,
+            ),
+            ("data", "model"),
+        )
+        self._sharding["data"] = jsd.NamedSharding(
+            mesh, jsd.PartitionSpec("data")
+        )
+        self._sharding["model"] = jsd.NamedSharding(
+            mesh, jsd.PartitionSpec("model")
+        )
+
+    def set_sharding(
+        self,
+        devices: dict[str, int | list[jax.Device]]
+        | tuple[int, int]
+        | tuple[list[jax.Device], list[jax.Device]]
+        | None,
+    ):
+        """Set data/model sharding."""
+        # TODO: note that if sharding is int or list[int] only single dimension
+        if devices is None:
+            self._sharding = {}
+        # sharding is supported
+        if isinstance(devices, tuple):
+            self._set_sharding(devices)
+        else:
+            self._set_sharding((devices["data"], devices["model"]))
 
     @property
     def sharding(
@@ -197,15 +243,15 @@ class Trainer(ABC):
         """dict[str, Sharding | None]: Current data/model sharding settings."""
         return self._sharding
 
-    def set_sharding(
+    @sharding.setter
+    def sharding(
         self,
-        sharding: list[int] | int | jsd.NamedSharding,
-        kind: Literal["data", "model"],
+        devices: dict[str, int | list[jax.Device]]
+        | tuple[int, int]
+        | tuple[list[jax.Device], list[jax.Device]]
+        | None,
     ):
-        """Set data/model sharding."""
-        # TODO: note that if sharding is int or list[int] only single dimension
-        # sharding is supported
-        self._set_sharding(sharding, kind)
+        self.set_sharding(devices)
 
     def _epoch_pbar(self, **kwargs) -> tqdm | rich_tqdm:
         tqdm_fun = rich_tqdm if self.use_rich else tqdm
@@ -324,6 +370,8 @@ class Trainer(ABC):
     def _setup_step_fun(
         train_step: StateStepFun | StepFun,
         optim: GradientTransformation,
+        model_sharding: jsd.NamedSharding | None = None,
+        **kwargs,
     ) -> Callable[..., Any]:
         pass
 
@@ -414,8 +462,12 @@ class Trainer(ABC):
 
         trainloader, valloader = self._prep_data(trainloader, valloader)
 
+        model_sharding = (
+            self._sharding["model"] if self._sharding is not None else None
+        )
         step_fun, model = self._jit_fun(
-            self._setup_step_fun(train_step, optim, **kwargs), model
+            self._setup_step_fun(train_step, optim, model_sharding, **kwargs),
+            model,
         )
         opt_state = self._optim_init(optim, model)
         state = train_state
@@ -563,17 +615,6 @@ class EQXTrainer(Trainer):
             epoch_state_file=epoch_state_file,
         )
 
-    def _set_sharding(
-        self,
-        sharding: list[int] | int | jsd.NamedSharding | None,
-        kind: Literal["data", "model"],
-    ):
-        if kind == "model" and sharding is not None:
-            raise NotImplementedError(
-                "Model sharding is not yet supported in EQXTrainer"
-            )
-        super()._set_sharding(sharding, kind)
-
     def get_callback(self, name: str) -> Callback:
         try:
             return self.callbacks[name]
@@ -596,6 +637,7 @@ class EQXTrainer(Trainer):
     def _setup_step_fun(
         train_step: StateStepFun | StepFun,
         optim: GradientTransformation,
+        model_sharding: jsd.NamedSharding | None = None,
         **kwargs,
     ) -> Callable[..., Any]:
         import equinox as eqx
@@ -606,6 +648,11 @@ class EQXTrainer(Trainer):
             opt_state_: PyTree,
             state_: PyTree | None,
         ) -> tuple[Callable[..., Any], StepOutput, PyTree, PyTree | None]:
+            if model_sharding is not None:
+                model_, opt_state_, state_ = eqx.filter_shard(
+                    (model_, opt_state_, state_), model_sharding
+                )
+
             if state_ is None:
                 out = train_step(model_, data_, **kwargs)  # type: ignore
             else:
@@ -717,6 +764,15 @@ class NNXTrainer(Trainer):
             epoch_state_file=epoch_state_file,
         )
 
+    def __getstate__(self):
+        state = super().__get_state__()
+        state["jit_kwargs"] = self._jit_kwargs
+        return state
+
+    def __setstate__(self, state):
+        super().__set_state__(state)
+        self._jit_kwargs = state["jit_kwargs"]
+
     def _jit_no_sharding(self, fun, model):
         from flax import nnx
 
@@ -725,23 +781,7 @@ class NNXTrainer(Trainer):
     def _jit_sharding(self, fun, model):
         from flax import nnx
 
-        if self.sharding.get("model"):
-            sharding = self.sharding["model"]
-        elif self.sharding.get("data"):
-            sharding = self.sharding["data"]
-        else:
-            raise AttributeError(
-                "Excpected sharding to be set but could not find sharding. "
-                "This is an internal error, please report on GitHub."
-            )
-        if isinstance(sharding, jsd.SingleDeviceSharding):
-            mesh = jax.make_mesh(
-                axis_shapes=(1,),
-                axis_names=("model",),
-                devices=list(sharding.device_set)[0],
-            )
-        else:
-            mesh = sharding.mesh  # type: ignore
+        mesh = self._sharding["data"].mesh
 
         @nnx.jit
         def jit_shard(module):
@@ -759,11 +799,13 @@ class NNXTrainer(Trainer):
 
     def _set_sharding(
         self,
-        sharding: list[int] | int | jsd.NamedSharding | None,
-        kind: Literal["data", "model"],
+        devices: dict[str, int | list[jax.Device]]
+        | tuple[int, int]
+        | tuple[list[jax.Device], list[jax.Device]]
+        | None,
     ):
-        super()._set_sharding(sharding, kind)
-        if self.sharding.get("model") or self.sharding.get("data"):
+        super()._set_sharding(devices)
+        if self._sharding:
             self._jit_fun = self._jit_sharding
         else:
             self._jit_fun = self._jit_no_sharding
@@ -779,7 +821,10 @@ class NNXTrainer(Trainer):
 
     @staticmethod
     def _setup_step_fun(
-        train_step: StateStepFun | StepFun, optim, **kwargs
+        train_step: StateStepFun | StepFun,
+        optim,
+        model_sharding: jsd.NamedSharding | None = None,
+        **kwargs,
     ) -> Callable[..., Any]:
         from flax import nnx
 
