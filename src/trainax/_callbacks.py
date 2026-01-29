@@ -1,8 +1,8 @@
 import logging
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, TextIO
-import shutil
 
 import numpy as np
 from jaxtyping import Float, Int
@@ -232,11 +232,10 @@ class BestModelSaver(Callback):
     """Checkpoint best model."""
 
     save_model: Callable[..., Any]
-    val_every: int
     _key: str
     _best_val: float
     _best_iter: int | None
-    _get_val: Callable[[EpochOutput], float]
+    _get_val: Callable[[EpochOutput, str], float]
     _criterion: Callable[[float, float], bool]
 
     def __init__(
@@ -244,7 +243,8 @@ class BestModelSaver(Callback):
         save_fun: Callable[[Callable[..., Any]], None],
         name: str = "BestModelSaver",
         key: Literal["train_loss", "val_loss"] | str = "val_loss",
-        criterion: Literal["min", "max"] = "min",
+        criterion: Literal["min", "max"]
+        | Callable[[float, float], bool] = "min",
         val_every: int = 1,
     ):
         """Initialize callback to save best model state.
@@ -262,30 +262,40 @@ class BestModelSaver(Callback):
         val_every : int, optional
             How often to evaluate the model, by default 1
         """
-        super().__init__(name)
+        super().__init__(name, val_every=val_every)
 
         self.save_model = save_fun
         self.key = key
-        self.val_every = val_every
 
-        match criterion:
-            case "min":
-                self._criterion = lambda x, y: x < y
-                self._best_val = np.inf
-                self._best_iter = None
-            case "max":
-                self._criterion = lambda x, y: x > y
-                self._best_val = -np.inf
-                self._best_iter = None
-            case _:
-                raise ValueError(f"Invalid criterion: {criterion}")
+        if isinstance(criterion, str):
+            match criterion:
+                case "min":
+                    self._criterion = self._check_min
+                    self._best_val = np.inf
+                    self._best_iter = None
+                case "max":
+                    self._criterion = self._check_max
+                    self._best_val = -np.inf
+                    self._best_iter = None
+                case _:
+                    raise ValueError(f"Invalid criterion: {criterion}")
+        else:
+            self._criterion = criterion
+
+    @staticmethod
+    def _check_min(x: float, y: float) -> bool:
+        return x < y
+
+    @staticmethod
+    def _check_max(x: float, y: float) -> bool:
+        return x > y
 
     @property
     def best_value(self) -> float:
         return self._best_val
 
     @property
-    def best_epoch(self) -> int:
+    def best_epoch(self) -> int | None:
         return self._best_iter
 
     @property
@@ -296,36 +306,39 @@ class BestModelSaver(Callback):
     def key(self, key: str):
         self.set_key(key)
 
+    @staticmethod
+    def _get_val_loss(epoch_output: EpochOutput, _) -> float:
+        return epoch_output.val_loss  # type: ignore[return-value]
+
+    @staticmethod
+    def _get_train_loss(epoch_output: EpochOutput, _) -> float:
+        return epoch_output.train_loss
+
+    @staticmethod
+    def _get_val_metric(epoch_output: EpochOutput, key: str) -> float:
+        try:
+            return epoch_output.metrics[key]  # type: ignore[return-value]
+        except KeyError as ke:
+            raise KeyError(
+                f"Invalid key: {key}. Metric not found as output "
+                "in train/val epoch."
+            ) from ke
+        except TypeError as te:
+            raise ValueError(
+                f"Invalid key: {key}. If no specific metrics are "
+                "computed during training, use 'train_loss' or "
+                "'val_loss'."
+            ) from te
+
     def set_key(self, key: str):
         """Change the metric key used to evaluate model quality."""
         match key:
             case "val_loss":
-
-                def _val_loss(epoch_output: EpochOutput):
-                    return epoch_output.val_loss  # type: ignore[return-value]
-
-                self._get_val = _val_loss  # type: ignore
+                self._get_val = self._get_val_loss  # type: ignore
             case "train_loss":
-                self._get_val = lambda epoch_output: epoch_output.train_loss
+                self._get_val = self._get_train_loss
             case _:
-
-                def _get_val(epoch_output: EpochOutput):
-                    try:
-                        return epoch_output.metrics[key]  # type: ignore
-                    except KeyError as ke:
-                        raise KeyError(
-                            f"Invalid key: {key}. Metric not found as output "
-                            "in train/val epoch."
-                        ) from ke
-                    except TypeError as te:
-                        raise ValueError(
-                            f"Invalid key: {key}. If no specific metrics are "
-                            "computed during training, use 'train_loss' or "
-                            "'val_loss'."
-                        ) from te
-
-                self._get_val = _get_val
-
+                self._get_val = self._get_val_metric
         self._key = key
 
     def on_epoch_end(
@@ -340,7 +353,7 @@ class BestModelSaver(Callback):
         if epoch % self.val_every != 0 and self.key.startswith("val"):
             return
 
-        new_val = self._get_val(epoch_output)
+        new_val = self._get_val(epoch_output, self._key)
         try:
             if self._criterion(new_val, self._best_val):
                 self._best_val = new_val
