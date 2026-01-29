@@ -408,6 +408,34 @@ class Trainer(ABC):
         with open(file_path, "wb") as file:
             pickle.dump(self, file)
 
+    def get_callback(self, name: str) -> Callback:
+        """
+        Retrieve a callback instance by name.
+
+        Parameters
+        ----------
+        name : str
+            Name of the callback to retrieve.
+
+        Returns
+        -------
+        Callback
+            The callback instance.
+
+        Raises
+        ------
+        KeyError
+            If the requested callback name unknown. Available
+            names can be printed with `callbacks.keys()`
+        """
+        try:
+            return self.callbacks[name]
+        except KeyError as ke:
+            raise KeyError(
+                f"Unknown callback {name}. Available options are "
+                f"{list(self.callbacks.keys())}"
+            ) from ke
+
     def train(
         self,
         model: Callable[..., Any],
@@ -617,15 +645,6 @@ class EQXTrainer(Trainer):
             aggregate_steps=aggregate_steps,
             epoch_state_file=epoch_state_file,
         )
-
-    def get_callback(self, name: str) -> Callback:
-        try:
-            return self.callbacks[name]
-        except KeyError as ke:
-            raise KeyError(
-                f"Unknown callback {name}. Available options are "
-                f"{list(self.callbacks.keys())}"
-            ) from ke
 
     @staticmethod
     def _optim_init(
