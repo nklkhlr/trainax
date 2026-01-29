@@ -480,10 +480,11 @@ class Trainer(ABC):
                 epoch_output=epoch_output,
                 file_handler=self.file_handler,
             )
-            epoch_bar.update(1)
 
             if self.epoch_state_file is not None:
                 self.save(self.epoch_state_file)
+
+            epoch_bar.update(1)
 
         epoch_bar.refresh()
 
