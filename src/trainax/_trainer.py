@@ -135,10 +135,10 @@ class Trainer(ABC):
             self.epoch_state_file = None
 
         self._sharding = {}
-        self._set_sharding(model_sharding, "model")
-        self._set_sharding(data_sharding, "data")
+        self._set_sharding((data_sharding, model_sharding))
 
         self._aggregate_steps = aggregate_steps
+        self._val_pbar = None
 
     def __getstate__(self):
         if self._sharding:
@@ -200,10 +200,13 @@ class Trainer(ABC):
     ):
         if isinstance(devices[0], int):
             mesh_shape = devices
-            devs = [jax.devices()[i] for i in range(sum(devices))]
+            devs = [
+                jax.devices()[i]
+                for i in range(devices[0] * devices[1])  # type: ignore[invalid-argument]
+            ]
         else:
-            mesh_shape = (len(devices[0]), len(devices[1]))
-            devs = devices[0] + devices[1]
+            mesh_shape = (len(devices[0]), len(devices[1]))  # type: ignore[invalid-argument]
+            devs = devices[0] + devices[1]  # type: ignore[invalid-argument]
 
         mesh = jsd.Mesh(
             jax.experimental.mesh_utils.create_device_mesh(
@@ -765,12 +768,12 @@ class NNXTrainer(Trainer):
         )
 
     def __getstate__(self):
-        state = super().__get_state__()
+        state = super().__getstate__()
         state["jit_kwargs"] = self._jit_kwargs
         return state
 
     def __setstate__(self, state):
-        super().__set_state__(state)
+        super().__setstate__(state)
         self._jit_kwargs = state["jit_kwargs"]
 
     def _jit_no_sharding(self, fun, model):
