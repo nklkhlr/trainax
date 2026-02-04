@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import jax
+from jax.experimental import mesh_utils
 import jax.sharding as jsd
 import numpy as np
 from jaxtyping import Array, PyTree
@@ -209,7 +210,7 @@ class Trainer(ABC):
             devs = devices[0] + devices[1]  # type: ignore[invalid-argument]
 
         mesh = jsd.Mesh(
-            jax.experimental.mesh_utils.create_device_mesh(
+            mesh_utils.create_device_mesh(
                 mesh_shape,
                 devices=devs,
             ),
