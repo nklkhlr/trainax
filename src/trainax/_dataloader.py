@@ -51,7 +51,7 @@ class JaxLoader:
 
         Notes
         -----
-        If the nubmer of samples (i.e. data[x_key].shape[0]) is not divisible by
+        If the number of samples (i.e. data[x_key].shape[0]) is not divisible by
         the number of samples per batch (i.e. batch_size), the last batch will
         be dropped.
         """
