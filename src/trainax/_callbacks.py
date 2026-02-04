@@ -3,6 +3,7 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, TextIO
+from importlib.utils import find_spec
 
 import numpy as np
 from jaxtyping import Float, Int
@@ -421,19 +422,14 @@ class NNXBestModelSaver(BestModelSaver):
         val_every: int = 1,
         force_overwrite: bool = False,
     ):
-        try:
-            from flax import nnx
-        except ImportError as ie:
+        if not find_spec("flax"):
             raise ImportError(
                 "NNXBestModelSaver requires flax (and orbax) to be installed."
-            ) from ie
-
-        try:
-            import orbax.checkpoint as ocp
-        except ImportError as ie:
+            )
+        if not find_spec("orbax"):
             raise ImportError(
                 "NNXBestModelSaver requires orbax to be installed"
-            ) from ie
+            )
 
         super().__init__(self._save_model, name, key, criterion, val_every)
         self.save_file = Path(save_path) / "best_model"
@@ -517,6 +513,15 @@ class EQXBestModelSaver(BestModelSaver):
         key: Literal["train_loss", "val_loss"] | str = "val_loss",
         criterion: Literal["min", "max"] = "min",
     ):
+        if not find_spec("equinox"):
+            raise ImportError(
+                "EQXBestModelSaver requires equinox (and orbax) to be installed."
+            )
+        if not find_spec("orbax"):
+            raise ImportError(
+                "EQXBestModelSaver requires orbax to be installed"
+            )
+
         super().__init__(self._save_model, name, key, criterion)
         self.save_file = Path(save_path) / "best_model"
 
