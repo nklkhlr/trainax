@@ -1,10 +1,11 @@
 import logging
 import shutil
 from collections.abc import Callable
+from importlib.utils import find_spec
 from pathlib import Path
 from typing import Any, Literal, TextIO
-from importlib.utils import find_spec
 
+import jax
 import numpy as np
 from jaxtyping import Float, Int
 from numpy.typing import NDArray
@@ -412,6 +413,8 @@ class NNXBestModelSaver(BestModelSaver):
     """
 
     save_file: Path
+    _single_device: bool
+    _to_cpu: bool
 
     def __init__(
         self,
@@ -421,6 +424,8 @@ class NNXBestModelSaver(BestModelSaver):
         criterion: Literal["min", "max"] = "min",
         val_every: int = 1,
         force_overwrite: bool = False,
+        save_to_single_device: bool = False,
+        save_to_cpu: bool = False,
     ):
         if not find_spec("flax"):
             raise ImportError(
@@ -430,6 +435,11 @@ class NNXBestModelSaver(BestModelSaver):
             raise ImportError(
                 "NNXBestModelSaver requires orbax to be installed"
             )
+
+        self._single_device = save_to_single_device
+        self.to_cpu = save_to_cpu
+        if self._to_cpu:
+            self._to_cpu = self._single_device = True
 
         super().__init__(self._save_model, name, key, criterion, val_every)
         self.save_file = Path(save_path) / "best_model"
@@ -446,18 +456,48 @@ class NNXBestModelSaver(BestModelSaver):
             else:
                 self.save_file.unlink()
 
+    @property
+    def to_cpu(self):
+        return self._to_cpu
+
+    @to_cpu.setter
+    def to_cpu(self, value: bool):
+        self._to_cpu = value
+        if self._to_cpu:
+            self.single_device = True
+
+    @property
+    def single_device(self):
+        return self._single_device
+
+    @single_device.setter
+    def single_device(self, value: bool):
+        if not value and self._to_cpu:
+            raise ValueError(
+                "Cannot set `single_device` to False when `to_cpu` is True."
+            )
+        self._single_device = value
+
     def _save_model(self, model, *args, **kwargs):
         import orbax.checkpoint as ocp
         from flax import nnx
 
         state = nnx.state(model)
-        pure_dict_state = nnx.to_pure_dict(state)
+        if self._single_device:
+            device = jax.devices("cpu")[0] if self._to_cpu else jax.devices()[0]
+            state = jax.device_put(state, device)
+
+        state = nnx.to_pure_dict(state)
         with ocp.StandardCheckpointer() as checkpointer:
-            checkpointer.save(self.save_file, pure_dict_state, force=True)
+            checkpointer.save(self.save_file, state, force=True)
 
     @staticmethod
     def load_model(
-        save_file: str | Path, model_cls, init_params: dict[str, Any] | None
+        save_file: str | Path,
+        model_cls,
+        init_params: dict[str, Any] | None,
+        mesh: jax.sharding.Mesh | None = None,
+        device: jax.Device | None = None,
     ):
         import orbax.checkpoint as ocp
         from flax import nnx
@@ -468,7 +508,7 @@ class NNXBestModelSaver(BestModelSaver):
         if isinstance(model_cls, nnx.Module):
             return nnx.update(model_cls, restored_state)
 
-        abstract_model = nnx.eval_shape(lambda: model_cls(**init_params))
+        abstract_model = nnx.eval_shape(lambda: model_cls(**init_params or {}))
         graphdef, abstract_state = nnx.split(abstract_model)
         nnx.replace_by_pure_dict(abstract_state, restored_state)
         return nnx.merge(graphdef, abstract_state)
