@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Nikolai Koehler", email = "nikolai.koehler@cos.uni-heidelberg.de" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "jax>=0.8.0",
     "jaxtyping>=0.3.2",
@@ -42,7 +42,7 @@ known_plotting = ["matplotlib", "seaborn"]
 
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 indent-width = 4
 line-length = 80
 fix = true
