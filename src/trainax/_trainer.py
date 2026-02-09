@@ -176,7 +176,8 @@ class Trainer(ABC):
         self.epoch_state_file = state["epoch_state_file"]
         self.set_aggregate_steps(state["aggregate_steps"])
 
-        if mesh_shape := state["mesh_shape"] is not None:
+        self._sharding = {}
+        if (mesh_shape := state["mesh_shape"]) is not None:
             self.sharding = mesh_shape
 
     @property
