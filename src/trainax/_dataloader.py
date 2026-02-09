@@ -1,5 +1,6 @@
 import warnings
 from collections.abc import Callable, Generator
+from typing import TypeVar
 
 import jax
 import jax.sharding as jsd
@@ -8,19 +9,22 @@ import numpy as np
 from jaxtyping import Array
 from numpy.typing import NDArray
 
+T = TypeVar("T", Array, NDArray)
 
-class JaxLoader:
+
+class JaxLoader[T]:
     """Lightweight data loading utilities in pure numpy/jax.
 
     Data is stored as and provided a dictionary of jax/numpy arrays
     """
 
-    _data: dict[str, Array | NDArray]
+    _data: dict[str, T]
     _batch_size: int
     _n_batches: int
     _sharding: jsd.NamedSharding | jsd.SingleDeviceSharding | None
     _batch_func: Callable
     _rng: np.random.Generator
+    _seed: int
     _x_key: str
 
     def __init__(
@@ -64,7 +68,8 @@ class JaxLoader:
         self._x_key = x_key
 
         self._data = data
-        self._rng = np.random.default_rng(seed or seed)
+        self._seed = seed
+        self._rng = np.random.default_rng(seed)
 
         # sets _batch_size and _n_batches
         self._set_batch_size(batch_size)
@@ -88,7 +93,7 @@ class JaxLoader:
             if self.n_points % batch_size != 0:
                 warnings.warn(
                     f"Batch size ({batch_size}) is not a multiple of dataset "
-                    f"size {len(self._data['x'])}. Dropping last batch "
+                    f"size {self.n_points}. Dropping last batch "
                     "(random samples for each epoch)",
                     UserWarning,
                     stacklevel=2,
@@ -139,6 +144,16 @@ class JaxLoader:
         self._set_batch_size(batch_size)
 
     @property
+    def seed(self) -> int:
+        """Seed used for random splitting."""
+        return self._seed
+
+    @seed.setter
+    def seed(self, seed: int):
+        self._seed = seed
+        self._rng = np.random.default_rng(seed)
+
+    @property
     def n_batches(self) -> int:
         """Number of batches in the loader."""
         return self._n_batches
@@ -146,10 +161,10 @@ class JaxLoader:
     @property
     def n_points(self) -> int:
         """Number of points in the dataset."""
-        return self._data[self._x_key].shape[0]
+        return self._data[self._x_key].shape[0]  # type: ignore
 
     @property
-    def data(self) -> dict[str, Array | NDArray]:
+    def data(self) -> dict[str, T]:
         """Get the data dictionary."""
         return self._data
 
@@ -183,6 +198,10 @@ class JaxLoader:
         """
         return self._sharding
 
+    @sharding.setter
+    def sharding(self, sharding: jsd.NamedSharding | jsd.SingleDeviceSharding):
+        self._set_sharding(sharding)
+
     def set_sharding(
         self, sharding: jsd.NamedSharding | jsd.SingleDeviceSharding | None
     ):
@@ -199,7 +218,7 @@ class JaxLoader:
         self, indices: NDArray, idx: int
     ) -> dict[str, Array | NDArray]:
         idxs = indices[idx * self._batch_size : (idx + 1) * self._batch_size]
-        return {key: self._data[key][idxs, ...] for key in self._data}
+        return {key: self._data[key][idxs, ...] for key in self._data}  # type: ignore
 
     def _shard_batch(
         self, indices: NDArray, idx: int
@@ -210,7 +229,7 @@ class JaxLoader:
             for key, arr in batch.items()
         }
 
-    def __getitem__(self, idx: int | slice) -> dict[str, Array | NDArray]:
+    def __getitem__(self, idx: int | slice) -> dict[str, T]:
         """Return raw data by index or slice without shuffling.
 
         Parameters
@@ -223,9 +242,9 @@ class JaxLoader:
         dict[str, Array | NDArray]
             Dictionary mapping feature names to array slices.
         """
-        return {key: arr[idx, ...] for key, arr in self._data.items()}
+        return {key: arr[idx, ...] for key, arr in self._data.items()}  # type: ignore
 
-    def __iter__(self) -> Generator[dict[str, Array | NDArray]]:
+    def __iter__(self) -> Generator[dict[str, T]]:
         """Iterate over shuffled batches for the current configuration."""
         indices = np.arange(self.n_points)
         self._rng.shuffle(indices)
@@ -281,7 +300,7 @@ class JaxLoader:
         return new
 
 
-class SingleBatchJaxLoader(JaxLoader):
+class SingleBatchJaxLoader[T](JaxLoader):
     """JaxLoader for datasets with a single batch."""
 
     _points_per_shard: int
@@ -298,9 +317,7 @@ class SingleBatchJaxLoader(JaxLoader):
             data=data, batch_size=1, sharding=sharding, seed=seed, **kwargs
         )
 
-    def _get_batch(
-        self, indices: NDArray, idx: int
-    ) -> dict[str, Array | NDArray]:
+    def _get_batch(self, indices: NDArray, idx: int) -> dict[str, T]:  # type: ignore[override]
         return {key: self._data[key] for key in self._data}
 
     def _set_batch_size(self, batch_size):
@@ -337,9 +354,7 @@ class SingleBatchJaxLoader(JaxLoader):
 
             self._batch_func = self._shard_batch
 
-    def _shard_batch(
-        self, indices: NDArray, idx: int
-    ) -> dict[str, Array | NDArray]:
+    def _shard_batch(self, indices: NDArray, idx: int) -> dict[str, T]:  # type: ignore[override]
         batch = self._get_batch(indices[: self._points_per_shard], idx)
         return {
             key: jax.make_array_from_process_local_data(self._sharding, arr)
