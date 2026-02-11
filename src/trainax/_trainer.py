@@ -364,10 +364,7 @@ class Trainer(ABC):
 
     @staticmethod
     @abstractmethod
-    def _optim_init(
-        optim,
-        model: Callable[..., Any],
-    ) -> PyTree:
+    def _optim_init(optim, model: Callable[..., Any], **kwargs) -> PyTree:
         pass
 
     @staticmethod
@@ -655,12 +652,11 @@ class EQXTrainer(Trainer):
 
     @staticmethod
     def _optim_init(
-        optim: GradientTransformation,
-        model: Callable[..., Any],
+        optim: GradientTransformation, model: Callable[..., Any], **kwargs
     ) -> PyTree:
         import equinox as eqx
 
-        return optim.init(eqx.filter(model, eqx.is_array))
+        return optim.init(eqx.filter(model, eqx.is_array), **kwargs)
 
     @staticmethod
     def _setup_step_fun(
@@ -841,12 +837,11 @@ class NNXTrainer(Trainer):
 
     @staticmethod
     def _optim_init(
-        optim: GradientTransformation,
-        model: Callable[..., Any],
+        optim: GradientTransformation, model: Callable[..., Any], **kwargs
     ) -> PyTree:
         from flax import nnx
 
-        return nnx.ModelAndOptimizer(model, optim)  # type: ignore
+        return nnx.Optimizer(model, optim, wrt=nnx.Param, **kwargs)  # type: ignore
 
     @staticmethod
     def _setup_step_fun(
@@ -860,7 +855,7 @@ class NNXTrainer(Trainer):
         def _fun(
             model_: nnx.Module,
             data_: dict[str, NDArray | Array],
-            opt_state_: PyTree,
+            opt_state_: nnx.Optimizer,
             _: None,
         ) -> tuple[Callable[..., Any], StepOutput, PyTree, PyTree | None]:
             out = train_step(model_, data_, **kwargs)  # type: ignore
@@ -871,7 +866,7 @@ class NNXTrainer(Trainer):
                     "updates."
                 )
 
-            opt_state_.update(out.gradients)
+            opt_state_.update(model_, out.gradients)
 
             return model_, out, opt_state_, out.state  # type: ignore
 
