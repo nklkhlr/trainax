@@ -88,6 +88,7 @@ class JaxLoader[T]:
                 stacklevel=2,
             )
             self._batch_size = self.n_points
+            self._n_batches = 1
         else:
             self._n_batches = self.n_points // batch_size
             if self.n_points % batch_size != 0:
