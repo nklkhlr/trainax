@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 import jax
-from jax.experimental import mesh_utils
 import jax.sharding as jsd
 import numpy as np
+from jax.experimental import mesh_utils
 from jaxtyping import Array, PyTree
 from numpy.typing import NDArray
 from optax import GradientTransformation
@@ -448,6 +448,7 @@ class Trainer(ABC):
         valloader: JaxLoader | None,
         train_state: PyTree | None = None,
         keep_gradients: bool = False,
+        optim_init_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ) -> TrainOutput:
         """Execute the training loop and return the updated model/state.
@@ -472,6 +473,10 @@ class Trainer(ABC):
             Initial mutable state (e.g. BatchNorm statistics) for training.
         keep_gradients: bool, False
             Whether to retain gradients beyond the batch step.
+        optim_init_kwargs : dict[str, Any] | None, optional
+            Initialisation arguments for the optimizer. Either
+            `nnx.Optimizer` for NNXTrainer or `optax.GradientTransformation`
+            for EQXTrainer
 
         Returns
         -------
@@ -502,7 +507,7 @@ class Trainer(ABC):
             self._setup_step_fun(train_step, optim, model_sharding, **kwargs),
             model,
         )
-        opt_state = self._optim_init(optim, model)
+        opt_state = self._optim_init(optim, model, **optim_init_kwargs or {})
         state = train_state
 
         val_step_fun, model = self._jit_val_step(valloader, val_step, model)  # type: ignore
