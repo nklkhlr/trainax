@@ -1,9 +1,19 @@
-# trainax
+<div align="left">
+<img src="https://raw.githubusercontent.com/nklkhlr/trainax/main/media/logo.svg" alt="logo"></img>
+</div>
+
+# Ligthweigt training utilities for JAX models
 
 > **Work in progress.** This library is under active development. APIs may change without notice and no stability guarantees are made.
 
-`trainax` is a lightweight training utility library for [JAX](https://docs.jax.dev/en/latest/index.html) models. It provides a shared data loader for [equinox](https://github.com/patrick-kidger/equinox) models, including stateful models, and for [flax NNX](https://flax.readthedocs.io/en/latest/nnx/) models.
-
+`trainax` is a lightweight training utility library for [JAX](https://docs.jax.dev/en/latest/index.html) models. 
+It provides a shared data loader for [equinox](https://github.com/patrick-kidger/equinox) models, 
+including stateful models, and for [flax NNX](https://flax.readthedocs.io/en/latest/nnx/) models and handles model- and 
+data-sharding as well ass just-in-time compilation for both libraries 
+automatically.
+Additionally, `trainax` provides a `Trainer` class that can easily be customized
+via callbacks (similar but much less comprehensive to the use of callbacks
+in [`pytorch-lighting`](https://github.com/Lightning-AI/pytorch-lightning))
 
 ## Installation
 
