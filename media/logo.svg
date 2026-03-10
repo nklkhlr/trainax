@@ -5,7 +5,7 @@
    height="114.70103"
    version="1.1"
    id="svg312"
-   sodipodi:docname="trainax_logo.svg"
+   sodipodi:docname="logo.svg"
    inkscape:version="1.2 (dc2aeda, 2022-05-15)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
@@ -22,9 +22,9 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#505050"
      showgrid="false"
-     inkscape:zoom="3.115"
-     inkscape:cx="156.17978"
-     inkscape:cy="48.796148"
+     inkscape:zoom="3.12"
+     inkscape:cx="180.12821"
+     inkscape:cy="48.717949"
      inkscape:window-width="2560"
      inkscape:window-height="1382"
      inkscape:window-x="0"
@@ -126,12 +126,12 @@
     </filter>
     <filter
        id="filter1134"
-       x="-0.0013302045"
-       y="-0.002600423"
-       width="1.0026604"
-       height="1.0052008">
+       x="-4.1055696e-06"
+       y="-8.0259971e-06"
+       width="1.0000082"
+       height="1.0000161">
       <feGaussianBlur
-         stdDeviation="0.03267865"
+         stdDeviation="0.00010086003"
          result="coloredBlur"
          id="feGaussianBlur1126" />
       <feMerge
@@ -152,7 +152,7 @@
        y1="98.681915"
        x2="255.58734"
        y2="141.01671"
-       gradientTransform="scale(1.3964112,0.71612145)"
+       gradientTransform="matrix(1.3964112,0,0,0.71612145,-27.165209,-21.510098)"
        gradientUnits="userSpaceOnUse" />
     <linearGradient
        inkscape:collect="always"
@@ -227,334 +227,326 @@
   <!-- Stem-to-rail junction highlight -->
   <!-- === WORDMARK === -->
   <g
-     id="g1324"
-     transform="translate(0.0240783)">
+     id="g1179"
+     transform="translate(-5.6223759,-34.899487)">
     <g
-       id="g1179"
-       transform="translate(-5.6464542,-34.899487)">
-      <g
-         opacity="0.06"
-         fill="#cad3f5"
-         id="g246">
-        <circle
-           cx="40"
-           cy="40"
-           r="1"
-           id="circle228" />
-        <circle
-           cx="80"
-           cy="40"
-           r="1"
-           id="circle230" />
-        <circle
-           cx="120"
-           cy="40"
-           r="1"
-           id="circle232" />
-        <circle
-           cx="40"
-           cy="80"
-           r="1"
-           id="circle234" />
-        <circle
-           cx="80"
-           cy="80"
-           r="1"
-           id="circle236" />
-        <circle
-           cx="120"
-           cy="80"
-           r="1"
-           id="circle238" />
-        <circle
-           cx="40"
-           cy="120"
-           r="1"
-           id="circle240" />
-        <circle
-           cx="80"
-           cy="120"
-           r="1"
-           id="circle242" />
-        <circle
-           cx="120"
-           cy="120"
-           r="1"
-           id="circle244" />
-      </g>
-      <rect
-         x="14"
-         y="46"
-         width="108"
-         height="4.5"
-         rx="2.25"
-         fill="url(#trackGrad)"
-         filter="url(#glow)"
-         id="rect248"
-         style="fill:url(#linearGradient1228)" />
-      <rect
-         x="14"
-         y="57"
-         width="108"
-         height="4.5"
-         rx="2.25"
-         fill="url(#trackGrad)"
-         filter="url(#glow)"
-         id="rect250"
-         style="fill:url(#linearGradient1230)" />
-      <rect
-         x="22"
-         y="43"
-         width="4"
-         height="17"
-         rx="1.5"
-         fill="#8bd5ca"
-         opacity="0.45"
-         id="rect252" />
-      <rect
-         x="36"
-         y="43"
-         width="4"
-         height="17"
-         rx="1.5"
-         fill="#8bd5ca"
-         opacity="0.45"
-         id="rect254" />
-      <rect
-         x="50"
-         y="43"
-         width="4"
-         height="17"
-         rx="1.5"
-         fill="#8bd5ca"
-         opacity="0.45"
-         id="rect256" />
-      <rect
-         x="64"
-         y="43"
-         width="4"
-         height="17"
-         rx="1.5"
-         fill="#8bd5ca"
-         opacity="0.45"
-         id="rect258" />
-      <rect
-         x="78"
-         y="43"
-         width="4"
-         height="17"
-         rx="1.5"
-         fill="#8bd5ca"
-         opacity="0.45"
-         id="rect260" />
-      <rect
-         x="92"
-         y="43"
-         width="4"
-         height="17"
-         rx="1.5"
-         fill="#8bd5ca"
-         opacity="0.45"
-         id="rect262" />
-      <rect
-         x="106"
-         y="43"
-         width="4"
-         height="17"
-         rx="1.5"
-         fill="#8bd5ca"
-         opacity="0.45"
-         id="rect264" />
-      <rect
-         x="59"
-         y="61"
-         width="18"
-         height="32"
-         rx="2"
-         fill="url(#stemGrad)"
-         opacity="0.9"
-         id="rect266"
-         style="fill:url(#stemGrad)" />
-      <line
-         x1="68"
-         y1="93"
-         x2="38"
-         y2="118"
-         stroke="#c6a0f6"
-         stroke-width="1.8"
-         opacity="0.7"
-         id="line268" />
-      <line
-         x1="68"
-         y1="93"
-         x2="68"
-         y2="122"
-         stroke="#8aadf4"
-         stroke-width="1.8"
-         opacity="0.7"
-         id="line270" />
-      <line
-         x1="68"
-         y1="93"
-         x2="98"
-         y2="118"
-         stroke="#c6a0f6"
-         stroke-width="1.8"
-         opacity="0.7"
-         id="line272" />
-      <line
-         x1="38"
-         y1="118"
-         x2="24"
-         y2="138"
-         stroke="#c6a0f6"
-         stroke-width="1.2"
-         opacity="0.45"
-         id="line274" />
-      <line
-         x1="38"
-         y1="118"
-         x2="46"
-         y2="138"
-         stroke="#c6a0f6"
-         stroke-width="1.2"
-         opacity="0.45"
-         id="line276" />
-      <line
-         x1="98"
-         y1="118"
-         x2="86"
-         y2="138"
-         stroke="#c6a0f6"
-         stroke-width="1.2"
-         opacity="0.45"
-         id="line278" />
-      <line
-         x1="98"
-         y1="118"
-         x2="110"
-         y2="138"
-         stroke="#c6a0f6"
-         stroke-width="1.2"
-         opacity="0.45"
-         id="line280" />
-      <line
-         x1="68"
-         y1="122"
-         x2="60"
-         y2="142"
-         stroke="#8aadf4"
-         stroke-width="1.2"
-         opacity="0.45"
-         id="line282" />
-      <line
-         x1="68"
-         y1="122"
-         x2="76"
-         y2="142"
-         stroke="#8aadf4"
-         stroke-width="1.2"
-         opacity="0.45"
-         id="line284" />
+       opacity="0.06"
+       fill="#cad3f5"
+       id="g246">
       <circle
-         cx="38"
-         cy="118"
-         r="5.5"
-         fill="url(#nodeGrad)"
-         filter="url(#nodeGlow)"
-         id="circle286"
-         style="fill:url(#linearGradient1232)" />
+         cx="40"
+         cy="40"
+         r="1"
+         id="circle228" />
       <circle
-         cx="68"
-         cy="122"
-         r="5.5"
-         fill="url(#nodeGrad)"
-         filter="url(#nodeGlow)"
-         id="circle288"
-         style="fill:url(#linearGradient1234)" />
+         cx="80"
+         cy="40"
+         r="1"
+         id="circle230" />
       <circle
-         cx="98"
-         cy="118"
-         r="5.5"
-         fill="url(#nodeGrad)"
-         filter="url(#nodeGlow)"
-         id="circle290"
-         style="fill:url(#linearGradient1236)" />
+         cx="120"
+         cy="40"
+         r="1"
+         id="circle232" />
       <circle
-         cx="24"
-         cy="138"
-         r="3.5"
-         fill="#c6a0f6"
-         opacity="0.6"
-         id="circle292" />
+         cx="40"
+         cy="80"
+         r="1"
+         id="circle234" />
       <circle
-         cx="46"
-         cy="138"
-         r="3.5"
-         fill="#c6a0f6"
-         opacity="0.6"
-         id="circle294" />
+         cx="80"
+         cy="80"
+         r="1"
+         id="circle236" />
       <circle
-         cx="60"
-         cy="142"
-         r="3.5"
-         fill="#8aadf4"
-         opacity="0.6"
-         id="circle296" />
+         cx="120"
+         cy="80"
+         r="1"
+         id="circle238" />
       <circle
-         cx="76"
-         cy="142"
-         r="3.5"
-         fill="#8aadf4"
-         opacity="0.6"
-         id="circle298" />
+         cx="40"
+         cy="120"
+         r="1"
+         id="circle240" />
       <circle
-         cx="86"
-         cy="138"
-         r="3.5"
-         fill="#c6a0f6"
-         opacity="0.6"
-         id="circle300" />
+         cx="80"
+         cy="120"
+         r="1"
+         id="circle242" />
       <circle
-         cx="110"
-         cy="138"
-         r="3.5"
-         fill="#c6a0f6"
-         opacity="0.6"
-         id="circle302" />
-      <rect
-         x="59"
-         y="61"
-         width="18"
-         height="6"
-         rx="1"
-         fill="#8bd5ca"
-         opacity="0.4"
-         id="rect304" />
+         cx="120"
+         cy="120"
+         r="1"
+         id="circle244" />
     </g>
-    <g
-       id="g1138"
-       transform="translate(-27.189287,-21.510098)">
-      <text
-         x="148"
-         y="100"
-         font-family="'SF Mono', 'JetBrains Mono', 'Fira Code', monospace"
-         font-size="52px"
-         font-weight="700"
-         letter-spacing="-2"
-         fill="#cad3f5"
-         id="text306">train</text>
-      <text
-         x="296"
-         y="100"
-         font-family="'SF Mono', 'JetBrains Mono', 'Fira Code', monospace"
-         font-size="52px"
-         font-weight="700"
-         letter-spacing="-2"
-         fill="url(#nodeGrad)"
-         filter="url(#glow)"
-         id="text308"
-         style="fill:url(#linearGradient1181);filter:url(#filter1134)">ax</text>
-    </g>
+    <rect
+       x="14"
+       y="46"
+       width="108"
+       height="4.5"
+       rx="2.25"
+       fill="url(#trackGrad)"
+       filter="url(#glow)"
+       id="rect248"
+       style="fill:url(#linearGradient1228)" />
+    <rect
+       x="14"
+       y="57"
+       width="108"
+       height="4.5"
+       rx="2.25"
+       fill="url(#trackGrad)"
+       filter="url(#glow)"
+       id="rect250"
+       style="fill:url(#linearGradient1230)" />
+    <rect
+       x="22"
+       y="43"
+       width="4"
+       height="17"
+       rx="1.5"
+       fill="#8bd5ca"
+       opacity="0.45"
+       id="rect252" />
+    <rect
+       x="36"
+       y="43"
+       width="4"
+       height="17"
+       rx="1.5"
+       fill="#8bd5ca"
+       opacity="0.45"
+       id="rect254" />
+    <rect
+       x="50"
+       y="43"
+       width="4"
+       height="17"
+       rx="1.5"
+       fill="#8bd5ca"
+       opacity="0.45"
+       id="rect256" />
+    <rect
+       x="64"
+       y="43"
+       width="4"
+       height="17"
+       rx="1.5"
+       fill="#8bd5ca"
+       opacity="0.45"
+       id="rect258" />
+    <rect
+       x="78"
+       y="43"
+       width="4"
+       height="17"
+       rx="1.5"
+       fill="#8bd5ca"
+       opacity="0.45"
+       id="rect260" />
+    <rect
+       x="92"
+       y="43"
+       width="4"
+       height="17"
+       rx="1.5"
+       fill="#8bd5ca"
+       opacity="0.45"
+       id="rect262" />
+    <rect
+       x="106"
+       y="43"
+       width="4"
+       height="17"
+       rx="1.5"
+       fill="#8bd5ca"
+       opacity="0.45"
+       id="rect264" />
+    <rect
+       x="59"
+       y="61"
+       width="18"
+       height="32"
+       rx="2"
+       fill="url(#stemGrad)"
+       opacity="0.9"
+       id="rect266"
+       style="fill:url(#stemGrad)" />
+    <line
+       x1="68"
+       y1="93"
+       x2="38"
+       y2="118"
+       stroke="#c6a0f6"
+       stroke-width="1.8"
+       opacity="0.7"
+       id="line268" />
+    <line
+       x1="68"
+       y1="93"
+       x2="68"
+       y2="122"
+       stroke="#8aadf4"
+       stroke-width="1.8"
+       opacity="0.7"
+       id="line270" />
+    <line
+       x1="68"
+       y1="93"
+       x2="98"
+       y2="118"
+       stroke="#c6a0f6"
+       stroke-width="1.8"
+       opacity="0.7"
+       id="line272" />
+    <line
+       x1="38"
+       y1="118"
+       x2="24"
+       y2="138"
+       stroke="#c6a0f6"
+       stroke-width="1.2"
+       opacity="0.45"
+       id="line274" />
+    <line
+       x1="38"
+       y1="118"
+       x2="46"
+       y2="138"
+       stroke="#c6a0f6"
+       stroke-width="1.2"
+       opacity="0.45"
+       id="line276" />
+    <line
+       x1="98"
+       y1="118"
+       x2="86"
+       y2="138"
+       stroke="#c6a0f6"
+       stroke-width="1.2"
+       opacity="0.45"
+       id="line278" />
+    <line
+       x1="98"
+       y1="118"
+       x2="110"
+       y2="138"
+       stroke="#c6a0f6"
+       stroke-width="1.2"
+       opacity="0.45"
+       id="line280" />
+    <line
+       x1="68"
+       y1="122"
+       x2="60"
+       y2="142"
+       stroke="#8aadf4"
+       stroke-width="1.2"
+       opacity="0.45"
+       id="line282" />
+    <line
+       x1="68"
+       y1="122"
+       x2="76"
+       y2="142"
+       stroke="#8aadf4"
+       stroke-width="1.2"
+       opacity="0.45"
+       id="line284" />
+    <circle
+       cx="38"
+       cy="118"
+       r="5.5"
+       fill="url(#nodeGrad)"
+       filter="url(#nodeGlow)"
+       id="circle286"
+       style="fill:url(#linearGradient1232)" />
+    <circle
+       cx="68"
+       cy="122"
+       r="5.5"
+       fill="url(#nodeGrad)"
+       filter="url(#nodeGlow)"
+       id="circle288"
+       style="fill:url(#linearGradient1234)" />
+    <circle
+       cx="98"
+       cy="118"
+       r="5.5"
+       fill="url(#nodeGrad)"
+       filter="url(#nodeGlow)"
+       id="circle290"
+       style="fill:url(#linearGradient1236)" />
+    <circle
+       cx="24"
+       cy="138"
+       r="3.5"
+       fill="#c6a0f6"
+       opacity="0.6"
+       id="circle292" />
+    <circle
+       cx="46"
+       cy="138"
+       r="3.5"
+       fill="#c6a0f6"
+       opacity="0.6"
+       id="circle294" />
+    <circle
+       cx="60"
+       cy="142"
+       r="3.5"
+       fill="#8aadf4"
+       opacity="0.6"
+       id="circle296" />
+    <circle
+       cx="76"
+       cy="142"
+       r="3.5"
+       fill="#8aadf4"
+       opacity="0.6"
+       id="circle298" />
+    <circle
+       cx="86"
+       cy="138"
+       r="3.5"
+       fill="#c6a0f6"
+       opacity="0.6"
+       id="circle300" />
+    <circle
+       cx="110"
+       cy="138"
+       r="3.5"
+       fill="#c6a0f6"
+       opacity="0.6"
+       id="circle302" />
+    <rect
+       x="59"
+       y="61"
+       width="18"
+       height="6"
+       rx="1"
+       fill="#8bd5ca"
+       opacity="0.4"
+       id="rect304" />
   </g>
+  <text
+     x="120.83479"
+     y="78.489899"
+     font-family="'SF Mono', 'JetBrains Mono', 'Fira Code', monospace"
+     font-size="52px"
+     font-weight="700"
+     letter-spacing="-2"
+     fill="#cad3f5"
+     id="text306">train</text>
+  <text
+     x="268.83478"
+     y="78.489899"
+     font-family="'SF Mono', 'JetBrains Mono', 'Fira Code', monospace"
+     font-size="52px"
+     font-weight="700"
+     letter-spacing="-2"
+     fill="url(#nodeGrad)"
+     filter="url(#glow)"
+     id="text308"
+     style="fill:url(#linearGradient1181);filter:url(#filter1134)">ax</text>
 </svg>
