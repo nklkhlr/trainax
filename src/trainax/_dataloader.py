@@ -13,9 +13,39 @@ T = TypeVar("T", Array, NDArray)
 
 
 class JaxLoader[T]:
-    """Lightweight data loading utilities in pure numpy/jax.
+    """Lightweight data loader for in-memory numpy/jax datasets.
 
-    Data is stored as and provided a dictionary of jax/numpy arrays
+    Data is stored as a dictionary of jax/numpy arrays and yielded in
+    shuffled batches each epoch. The loader can be registered as a JAX pytree
+    via :func:`jax.tree_util.register_pytree_with_keys`.
+
+    Attributes
+    ----------
+    batch_size : int
+        Number of samples per batch (property, settable).
+    seed : int
+        Random seed controlling shuffle order (property, settable).
+    n_batches : int
+        Number of complete batches per epoch (property).
+    n_points : int
+        Total number of samples in the dataset (property).
+    data : dict[str, T]
+        The underlying data dictionary (property).
+    sharding : jsd.NamedSharding | jsd.SingleDeviceSharding | None
+        Active JAX sharding configuration (property, settable).
+
+    Methods
+    -------
+    set_batch_size(batch_size)
+        Update the batch size.
+    set_sharding(sharding)
+        Update the sharding configuration.
+    __getitem__(idx)
+        Return raw data by index or slice.
+    __iter__()
+        Iterate over shuffled batches.
+    __len__()
+        Return the number of batches per epoch.
     """
 
     _data: dict[str, T]
@@ -58,6 +88,20 @@ class JaxLoader[T]:
         If the number of samples (i.e. data[x_key].shape[0]) is not divisible by
         the number of samples per batch (i.e. batch_size), the last batch will
         be dropped.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> x = np.random.randn(100, 10).astype(np.float32)
+        >>> y = np.random.randn(100, 1).astype(np.float32)
+        >>> loader = JaxLoader({"x": x, "y": y}, batch_size=32)
+        >>> len(loader)  # 100 // 32 = 3 complete batches
+        3
+        >>> for batch in loader:
+        ...     print(batch["x"].shape)
+        (32, 10)
+        (32, 10)
+        (32, 10)
         """
         if x_key not in data:
             raise ValueError(
@@ -151,6 +195,13 @@ class JaxLoader[T]:
 
     @seed.setter
     def seed(self, seed: int):
+        """Set a new random seed and reinitialise the RNG.
+
+        Parameters
+        ----------
+        seed : int
+            New random seed for the shuffle generator.
+        """
         self._seed = seed
         self._rng = np.random.default_rng(seed)
 
@@ -277,21 +328,54 @@ class JaxLoader[T]:
             f"Sharding: {sharding_note})"
         )
 
+    @property
+    def data_type(self) -> type:
+        """Return the data type of the main data array."""
+        return type(self._data[self._x_key])
+
     def flatten_with_keys(self):
-        """Return pytree metadata for registration with `jax.tree_util`."""
+        """Return pytree metadata for registration with ``jax.tree_util``.
+
+        Returns
+        -------
+        tuple[list, tuple]
+            A ``(children, aux_data)`` pair where children includes attribute
+            keys for use with :func:`jax.tree_util.register_pytree_with_keys`.
+        """
         children = [jtu.GetAttrKey("_data"), self._data]
         aux_data = (self._batch_size, self._sharding, self._rng)
         return children, aux_data
 
     def flatten(self):
-        """Return pytree children/aux data without attribute keys."""
+        """Return pytree children/aux data without attribute keys.
+
+        Returns
+        -------
+        tuple[list, tuple]
+            A ``(children, aux_data)`` pair for standard pytree registration.
+        """
         children = [self._data]
         aux_data = (self._batch_size, self._sharding, self._rng)
         return children, aux_data
 
     @classmethod
     def unflatten(cls, aux_data, children):
-        """Reconstruct a loader instance from pytree children."""
+        """Reconstruct a loader instance from pytree children.
+
+        Parameters
+        ----------
+        aux_data : tuple
+            Auxiliary data produced by :meth:`flatten` containing
+            ``(batch_size, sharding, rng)``.
+        children : list
+            Pytree children produced by :meth:`flatten` containing the data
+            dict.
+
+        Returns
+        -------
+        JaxLoader
+            Reconstructed loader instance.
+        """
         new = cls(
             data=children[0],
             batch_size=aux_data[0],
@@ -302,7 +386,24 @@ class JaxLoader[T]:
 
 
 class SingleBatchJaxLoader[T](JaxLoader):
-    """JaxLoader for datasets with a single batch."""
+    """Specialisation of :class:`JaxLoader` that always yields one batch.
+
+    The entire dataset is returned as a single batch each epoch. Useful for
+    small in-memory datasets where no batching is required. Sharding is still
+    supported; data is split across devices without requiring the dataset size
+    to be divisible by the number of shards.
+
+    Methods
+    -------
+    __len__()
+        Always returns 1.
+    flatten_with_keys()
+        Return pytree representation with attribute keys.
+    flatten()
+        Return pytree representation without attribute keys.
+    unflatten(aux_data, children)
+        Reconstruct a single-batch loader from pytree children.
+    """
 
     _points_per_shard: int
     _n_batches: int = 1
@@ -314,6 +415,31 @@ class SingleBatchJaxLoader[T](JaxLoader):
         seed: int = 42,
         **kwargs,
     ):
+        """Initialise a single-batch data loader.
+
+        Parameters
+        ----------
+        data : dict
+            Dictionary of jax/numpy arrays. Must contain the key specified by
+            ``x_key`` (default ``"x"``) to determine the dataset size.
+        sharding : jsd.NamedSharding | jsd.SingleDeviceSharding | None, None
+            Optional JAX sharding configuration.
+        seed : int, 42
+            Random seed (used by the parent class; shuffle order does not
+            affect single-batch loading).
+        **kwargs
+            Additional keyword arguments forwarded to :class:`JaxLoader`
+            (e.g. ``x_key``).
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        The ``batch_size`` parameter is fixed to the dataset length; passing
+        any other value emits a :class:`UserWarning` and is ignored.
+        """
         super().__init__(
             data=data, batch_size=1, sharding=sharding, seed=seed, **kwargs
         )
@@ -363,23 +489,57 @@ class SingleBatchJaxLoader[T](JaxLoader):
         }
 
     def __len__(self) -> int:
+        """Return the number of batches per epoch (always 1).
+
+        Returns
+        -------
+        int
+            Always ``1``.
+        """
         return 1
 
     def flatten_with_keys(self):  # pyright: ignore
-        """Return pytree representation with attribute keys."""
+        """Return pytree representation with attribute keys.
+
+        Returns
+        -------
+        tuple[tuple, tuple]
+            A ``(children, aux_data)`` pair with attribute keys for use with
+            :func:`jax.tree_util.register_pytree_with_keys`.
+        """
         children = (jtu.GetAttrKey("_data"), self._data)
         aux_data = (self._sharding, self._rng, self._points_per_shard)
         return children, aux_data
 
     def flatten(self):  # pyright: ignore
-        """Return pytree representation without attribute keys."""
+        """Return pytree representation without attribute keys.
+
+        Returns
+        -------
+        tuple[Any, tuple]
+            A ``(children, aux_data)`` pair for standard pytree registration.
+        """
         children = self._data
         aux_data = (self._sharding, self._rng, self._points_per_shard)
         return children, aux_data
 
     @classmethod
     def unflatten(cls, aux_data, children):
-        """Reconstruct a single-batch loader from pytree children."""
+        """Reconstruct a single-batch loader from pytree children.
+
+        Parameters
+        ----------
+        aux_data : tuple
+            Auxiliary data from :meth:`flatten` containing
+            ``(sharding, rng, points_per_shard)``.
+        children : Any
+            Data dict produced by :meth:`flatten`.
+
+        Returns
+        -------
+        SingleBatchJaxLoader
+            Reconstructed loader instance.
+        """
         new = cls(
             data=children[0],
             sharding=aux_data[0],

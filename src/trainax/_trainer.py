@@ -54,9 +54,24 @@ class Trainer(ABC):
         Frequency (in epochs) for running validation steps.
     use_rich : bool
         Enable rich progress bars when available.
-    epoch_state_file: Path | None
-        File path to save the trainer state after each epoch. If None, the
+    epoch_state_file : Path | None
+        File path to save the trainer state after each epoch. If ``None``, the
         state is not saved during training.
+    aggregate_steps : str
+        Aggregation strategy applied to per-step metrics (property).
+
+    Methods
+    -------
+    set_aggregate_steps(aggregate_steps)
+        Override the aggregation strategy used in epoch summaries.
+    set_sharding(devices)
+        Set data/model sharding configuration.
+    save(file_path)
+        Persist the trainer instance to disk via pickle.
+    get_callback(name)
+        Retrieve a registered callback by name.
+    train(model, optim, train_step, trainloader, val_step, valloader, ...)
+        Execute the full training loop.
     """
 
     callbacks: dict[str, Callback]
@@ -180,6 +195,27 @@ class Trainer(ABC):
         if (mesh_shape := state["mesh_shape"]) is not None:
             self.sharding = mesh_shape
 
+    def __repr__(self) -> str:
+        sharding_info = (
+            ", ".join(
+                f"{k}: {v.num_devices} device(s)" for k, v in self._sharding.items()
+            )
+            if self._sharding
+            else "None"
+        )
+        callbacks = list(self.callbacks.keys()) or "None"
+        return (
+            f"{type(self).__name__}("
+            f"n_epochs={self.n_epochs}, "
+            f"val_every={self.val_every}, "
+            f"aggregate_steps={self._aggregate_steps!r}, "
+            f"callbacks={callbacks}, "
+            f"sharding={sharding_info})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
     @property
     def aggregate_steps(self):
         """str: Aggregation strategy applied to per-step metrics."""
@@ -188,7 +224,23 @@ class Trainer(ABC):
     def set_aggregate_steps(
         self, aggregate_steps: Literal["mean", "min", "max"]
     ):
-        """Override the aggregation strategy used in epoch summaries."""
+        """Override the aggregation strategy used in epoch summaries.
+
+        Parameters
+        ----------
+        aggregate_steps : {"mean", "min", "max"}
+            New aggregation strategy. ``"mean"`` computes the average of all
+            per-batch losses, ``"min"`` / ``"max"`` take the extremes.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If ``aggregate_steps`` is not one of the supported values.
+        """
         if aggregate_steps not in self._agg_funs:
             raise ValueError(
                 f"Invalid aggregate_steps: {aggregate_steps}. "
@@ -200,29 +252,55 @@ class Trainer(ABC):
         self,
         devices: tuple[int, int] | tuple[list[jax.Device], list[jax.Device]],
     ):
-        if isinstance(devices[0], int):
-            mesh_shape = devices
-            devs = [
-                jax.devices()[i]
-                for i in range(devices[0] * devices[1])  # type: ignore[invalid-argument]
-            ]
-        else:
-            mesh_shape = (len(devices[0]), len(devices[1]))  # type: ignore[invalid-argument]
-            devs = devices[0] + devices[1]  # type: ignore[invalid-argument]
+        if devices[0] is None and devices[1] is None:
+            return
 
-        mesh = jsd.Mesh(
-            mesh_utils.create_device_mesh(
-                mesh_shape,
-                devices=devs,
-            ),
-            ("data", "model"),
-        )
-        self._sharding["data"] = jsd.NamedSharding(
-            mesh, jsd.PartitionSpec("data")
-        )
-        self._sharding["model"] = jsd.NamedSharding(
-            mesh, jsd.PartitionSpec("model")
-        )
+        def _to_devices(spec):
+            if spec is None:
+                return None
+            if isinstance(spec, int):
+                return list(jax.devices()[:spec])
+            if spec and isinstance(spec[0], int):
+                return [jax.devices()[i] for i in spec]
+            return list(spec)
+
+        data_devs = _to_devices(devices[0])
+        model_devs = _to_devices(devices[1])
+
+        if data_devs is not None and model_devs is not None:
+            mesh_shape = (len(data_devs), len(model_devs))
+            mesh = jsd.Mesh(
+                mesh_utils.create_device_mesh(
+                    mesh_shape, devices=data_devs + model_devs
+                ),
+                ("data", "model"),
+            )
+            self._sharding["data"] = jsd.NamedSharding(
+                mesh, jsd.PartitionSpec("data")
+            )
+            self._sharding["model"] = jsd.NamedSharding(
+                mesh, jsd.PartitionSpec("model")
+            )
+        elif data_devs is not None:
+            mesh = jsd.Mesh(
+                mesh_utils.create_device_mesh(
+                    (len(data_devs),), devices=data_devs
+                ),
+                ("data",),
+            )
+            self._sharding["data"] = jsd.NamedSharding(
+                mesh, jsd.PartitionSpec("data")
+            )
+        else:
+            mesh = jsd.Mesh(
+                mesh_utils.create_device_mesh(
+                    (len(model_devs),), devices=model_devs  # type: ignore[arg-type]
+                ),
+                ("model",),
+            )
+            self._sharding["model"] = jsd.NamedSharding(
+                mesh, jsd.PartitionSpec("model")
+            )
 
     def set_sharding(
         self,
@@ -231,7 +309,23 @@ class Trainer(ABC):
         | tuple[list[jax.Device], list[jax.Device]]
         | None,
     ):
-        """Set data/model sharding."""
+        """Set data/model sharding configuration.
+
+        Parameters
+        ----------
+        devices : dict[str, int | list[jax.Device]] | tuple | None
+            Sharding specification. Accepted forms:
+
+            * ``None`` — disable sharding.
+            * ``(n_data, n_model)`` — device counts as integers.
+            * ``([data_devs], [model_devs])`` — explicit device lists.
+            * ``{"data": ..., "model": ...}`` — dict form with either counts
+              or device lists as values.
+
+        Returns
+        -------
+        None
+        """
         # TODO: note that if sharding is int or list[int] only single dimension
         if devices is None:
             self._sharding = {}
@@ -256,6 +350,13 @@ class Trainer(ABC):
         | tuple[list[jax.Device], list[jax.Device]]
         | None,
     ):
+        """Set data/model sharding via property assignment.
+
+        Parameters
+        ----------
+        devices : dict[str, int | list[jax.Device]] | tuple | None
+            Sharding specification accepted by :meth:`set_sharding`.
+        """
         self.set_sharding(devices)
 
     def _epoch_pbar(self, **kwargs) -> tqdm | rich_tqdm:
@@ -294,7 +395,7 @@ class Trainer(ABC):
     ) -> list[ValStepOutput]:
         step_results: list[ValStepOutput] = []
 
-        if epoch % self.val_every == 0 and valloader is not None:
+        if (epoch + 1) % self.val_every == 0 and valloader is not None:
             for callback in self.callbacks.values():
                 callback.on_val_start(epoch=epoch, loader=valloader)
             pbar = self._val_pbar or self._step_pbar(
@@ -344,7 +445,7 @@ class Trainer(ABC):
                 "Please pass a validation loader."
             )
 
-        return None
+        return None, model
 
     def _invoke_callbacks(
         self,
@@ -479,6 +580,17 @@ class Trainer(ABC):
         -------
         TrainOutput
             The updated model and final training state (if present).
+
+        Examples
+        --------
+        >>> model, state = trainer.train(
+        ...     model,
+        ...     optax.adam(1e-3),
+        ...     train_step,
+        ...     trainloader,
+        ...     val_step=val_step,
+        ...     valloader=valloader,
+        ... )
         """
         agg_fun = self._agg_funs[self._aggregate_steps]
         if valloader is not None:
@@ -497,9 +609,7 @@ class Trainer(ABC):
 
         trainloader, valloader = self._prep_data(trainloader, valloader)
 
-        model_sharding = (
-            self._sharding["model"] if self._sharding is not None else None
-        )
+        model_sharding = self._sharding.get("model")
         step_fun, model = self._jit_fun(
             self._setup_step_fun(train_step, optim, model_sharding, **kwargs),
             model,
@@ -509,7 +619,6 @@ class Trainer(ABC):
 
         val_step_fun, model = self._jit_val_step(valloader, val_step, model)  # type: ignore
         epoch_bar = self._epoch_pbar()
-        step_bar = self._step_pbar(trainloader)
         for epoch in range(self.n_epochs):
             self._invoke_callbacks(
                 event="epoch_start",
@@ -519,7 +628,7 @@ class Trainer(ABC):
             )
 
             epoch_data: list[StepOutput] = []
-            step_bar.reset()
+            step_bar = self._step_pbar(trainloader)
             for data in trainloader:
                 model, output, opt_state, state = step_fun(
                     model, data, opt_state, state
@@ -586,6 +695,47 @@ class Trainer(ABC):
 
 
 class EQXTrainer(Trainer):
+    """Trainer for `equinox <https://github.com/patrick-kidger/equinox>`_ functional models.
+
+    Uses :func:`eqx.filter_jit` for JIT compilation. The user supplies
+    ``train_step`` and optionally ``val_step`` callables; parameter updates are
+    applied via an :mod:`optax` optimiser inside the training loop.
+
+    .. Note::
+       Requires ``equinox`` to be installed
+       (``pip install trainax[eqx]`` or ``pip install equinox``).
+
+    Attributes
+    ----------
+    callbacks : dict[str, Callback]
+        Registered callback instances (inherited).
+    file_handler : FileHandler
+        Open file handler used during training (inherited).
+    n_epochs : int
+        Number of training epochs (inherited).
+    val_every : int
+        Validation frequency in epochs (inherited).
+    use_rich : bool
+        Whether rich progress bars are enabled (inherited).
+    epoch_state_file : Path | None
+        Path for per-epoch trainer snapshots (inherited).
+    aggregate_steps : str
+        Epoch-level loss aggregation strategy (inherited property).
+
+    Methods
+    -------
+    train(model, optim, train_step, trainloader, val_step, valloader, ...)
+        Execute the training loop (inherited from :class:`Trainer`).
+    save(file_path)
+        Persist the trainer to disk (inherited).
+    get_callback(name)
+        Retrieve a callback by name (inherited).
+    set_aggregate_steps(aggregate_steps)
+        Change the aggregation strategy (inherited).
+    set_sharding(devices)
+        Configure data/model sharding (inherited).
+    """
+
     def __init__(
         self,
         n_epochs: int,
@@ -627,6 +777,15 @@ class EQXTrainer(Trainer):
         epoch_state_file: str, optional
             File to save the trainer state after each epoch. If None, the state
             is not saved during training.
+
+        Examples
+        --------
+        >>> from trainax import EQXTrainer, EpochLogger
+        >>> trainer = EQXTrainer(
+        ...     n_epochs=50,
+        ...     callbacks=[EpochLogger("logger")],
+        ...     val_every=5,
+        ... )
         """
         try:
             import equinox as eqx
@@ -716,6 +875,49 @@ class EQXTrainer(Trainer):
 
 
 class NNXTrainer(Trainer):
+    """Trainer for `Flax NNX <https://flax.readthedocs.io/en/latest/nnx/>`_ stateful models.
+
+    Uses :func:`nnx.jit` for JIT compilation and :class:`nnx.Optimizer` for
+    parameter updates. Model state (e.g. BatchNorm running statistics) is
+    managed automatically by NNX's mutable module system — the ``train_state``
+    argument to :meth:`~Trainer.train` is not used and should be left as
+    ``None``.
+
+    .. Note::
+       Requires ``flax`` to be installed
+       (``pip install trainax[flax]`` or ``pip install flax``).
+
+    Attributes
+    ----------
+    callbacks : dict[str, Callback]
+        Registered callback instances (inherited).
+    file_handler : FileHandler
+        Open file handler used during training (inherited).
+    n_epochs : int
+        Number of training epochs (inherited).
+    val_every : int
+        Validation frequency in epochs (inherited).
+    use_rich : bool
+        Whether rich progress bars are enabled (inherited).
+    epoch_state_file : Path | None
+        Path for per-epoch trainer snapshots (inherited).
+    aggregate_steps : str
+        Epoch-level loss aggregation strategy (inherited property).
+
+    Methods
+    -------
+    train(model, optim, train_step, trainloader, val_step, valloader, ...)
+        Execute the training loop (inherited from :class:`Trainer`).
+    save(file_path)
+        Persist the trainer to disk (inherited).
+    get_callback(name)
+        Retrieve a callback by name (inherited).
+    set_aggregate_steps(aggregate_steps)
+        Change the aggregation strategy (inherited).
+    set_sharding(devices)
+        Configure data/model sharding (inherited).
+    """
+
     _jit_kwargs: dict[str, Any]
 
     def __init__(
@@ -759,6 +961,15 @@ class NNXTrainer(Trainer):
         epoch_state_file: str, False
             File to save the trainer state after each epoch. If None, the state
             is not saved during training.
+
+        Examples
+        --------
+        >>> from trainax import NNXTrainer, EpochLogger
+        >>> trainer = NNXTrainer(
+        ...     n_epochs=50,
+        ...     callbacks=[EpochLogger("logger")],
+        ...     val_every=5,
+        ... )
         """
         if find_spec("flax") is None:
             raise ImportError(

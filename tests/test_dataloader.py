@@ -178,7 +178,7 @@ def test_loader_repr_contains_summary(sample_data):
     )
     representation = repr(loader)
     assert "JaxLoader" in representation
-    assert "Data attributes: x, y" in representation
+    assert "Data attributes: ['x', 'y']" in representation
     assert "Batch size: 2" in representation
 
 

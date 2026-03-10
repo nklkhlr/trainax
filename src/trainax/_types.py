@@ -29,6 +29,40 @@ def _dataclass_pytrees_to_cpu(inst):
 
 @dataclass
 class StepOutput:
+    """Output container for a single training step, registered as a JAX pytree.
+
+    Attributes
+    ----------
+    loss : float | Array
+        Scalar loss value for this step.
+    y : NDArray | Array
+        Ground-truth targets for the batch.
+    yhat : NDArray | Array
+        Model predictions for the batch.
+    gradients : PyTree | None, None
+        Raw parameter gradients returned by the step function.
+    state : PyTree | None, None
+        Updated mutable model state (e.g. BatchNorm statistics), or ``None``
+        for stateless models.
+    metrics : dict[str, float] | PyTree | None, None
+        Optional per-step auxiliary metrics.
+
+    Methods
+    -------
+    to_cpu()
+        Move all array fields to CPU numpy in-place.
+
+    Examples
+    --------
+    Return a ``StepOutput`` from a training step:
+
+    >>> import jax.numpy as jnp
+    >>> loss = jnp.array(0.42)
+    >>> y = jnp.ones((8,))
+    >>> yhat = jnp.zeros((8,))
+    >>> out = StepOutput(loss=loss, y=y, yhat=yhat, gradients=grads)
+    """
+
     loss: float | Array
     y: NDArray | Array
     yhat: NDArray | Array
@@ -37,11 +71,39 @@ class StepOutput:
     metrics: dict[str, float] | PyTree | None = None
 
     def to_cpu(self):
+        """Move all array fields to CPU numpy in-place.
+
+        Returns
+        -------
+        None
+        """
         _dataclass_pytrees_to_cpu(self)
 
 
 @dataclass
 class ValStepOutput:
+    """Output container for a single validation step, registered as a JAX pytree.
+
+    Attributes
+    ----------
+    loss : float | Array
+        Scalar loss value for this step.
+    y : NDArray | Array
+        Ground-truth targets for the batch.
+    yhat : NDArray | Array
+        Model predictions for the batch.
+    state : PyTree | None, None
+        Updated mutable model state after the forward pass, or ``None`` for
+        stateless models.
+    metrics : dict[str, float] | PyTree | None, None
+        Optional per-step auxiliary metrics.
+
+    Methods
+    -------
+    to_cpu()
+        Move all array fields to CPU numpy in-place.
+    """
+
     loss: float | Array
     y: NDArray | Array
     yhat: NDArray | Array
@@ -49,11 +111,49 @@ class ValStepOutput:
     metrics: dict[str, float] | PyTree | None = None
 
     def to_cpu(self):
+        """Move all array fields to CPU numpy in-place.
+
+        Returns
+        -------
+        None
+        """
         _dataclass_pytrees_to_cpu(self)
 
 
 @dataclass
 class EpochOutput:
+    """Aggregated output over all steps in one training epoch.
+
+    Attributes
+    ----------
+    train_loss : float
+        Aggregated training loss for the epoch (using the configured
+        ``aggregate_steps`` strategy).
+    train_losses : NDArray
+        Per-batch training losses, shape ``(n_batches,)``.
+    y : NDArray
+        Concatenated ground-truth targets across all training batches.
+    yhat : NDArray
+        Concatenated model predictions across all training batches.
+    gradients : list[PyTree]
+        Per-batch gradient pytrees; entries are ``None`` when
+        ``keep_gradients=False``.
+    val_loss : float | None, None
+        Aggregated validation loss, or ``None`` if validation was skipped.
+    val_y : NDArray | None, None
+        Concatenated validation targets, or ``None`` if validation was skipped.
+    val_yhat : NDArray | None, None
+        Concatenated validation predictions, or ``None`` if validation was
+        skipped.
+    metrics : dict[str, float] | None, None
+        Optional aggregated auxiliary metrics for the epoch.
+
+    Methods
+    -------
+    from_step_outputs(train_steps, agg_fun, val_steps=None)
+        Construct an instance by aggregating lists of step outputs.
+    """
+
     train_loss: float
     train_losses: NDArray
     y: NDArray
@@ -71,6 +171,29 @@ class EpochOutput:
         agg_fun: Callable[[Float[NDArray | Array, " n_batches"]], float],
         val_steps: list[ValStepOutput] | None = None,
     ):
+        """Construct an instance by aggregating lists of step outputs.
+
+        Parameters
+        ----------
+        train_steps : list[StepOutput]
+            Non-empty list of per-batch training results.
+        agg_fun : Callable[[NDArray], float]
+            Aggregation function applied to per-batch loss arrays (e.g.
+            ``np.nanmean``).
+        val_steps : list[ValStepOutput] | None, None
+            Per-batch validation results, or ``None`` when validation was
+            skipped this epoch.
+
+        Returns
+        -------
+        EpochOutput
+            Aggregated epoch-level summary.
+
+        Raises
+        ------
+        ValueError
+            If ``train_steps`` is empty.
+        """
         if not train_steps:
             raise ValueError("At least one training step output is required.")
 
@@ -101,10 +224,34 @@ class EpochOutput:
 
 @dataclass
 class TrainOutput:
+    """Two-element container returned by :meth:`~trainax.Trainer.train`.
+
+    Supports unpacking as ``model, state = trainer.train(...)``.
+
+    Attributes
+    ----------
+    model : PyTree
+        The trained model after all epochs.
+    state : PyTree | None
+        Final mutable model state, or ``None`` for stateless models.
+
+    Methods
+    -------
+    __iter__()
+        Iterate as ``(model, state)`` to support tuple unpacking.
+    """
+
     model: PyTree
     state: PyTree | None
 
     def __iter__(self):
+        """Iterate as ``(model, state)`` to support tuple unpacking.
+
+        Returns
+        -------
+        Iterator
+            Iterator over ``(model, state)``.
+        """
         return iter((self.model, self.state))
 
 
