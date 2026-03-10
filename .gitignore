@@ -6,6 +6,9 @@ dist/
 wheels/
 *.egg-info
 
+# Jupyter
+.ipynb_checkpoints/
+
 # testing
 .coverage*
 
@@ -14,3 +17,6 @@ wheels/
 
 # jet brains
 .idea
+
+# mkdocs serving
+site/
