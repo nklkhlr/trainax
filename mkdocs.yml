@@ -1,0 +1,76 @@
+site_name: trainax
+site_description: Convenient data loader and training utilities for JAX models
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.annotate
+    - content.code.copy
+    - content.tooltips
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch-off
+        name: Switch to system preference
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: numpy
+            show_source: false
+            show_root_heading: true
+            members_order: source
+            separate_signature: true
+  - mkdocs-jupyter:
+      execute: false
+      include_source: true
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start (EQX): getting-started/quickstart_eqx.md
+      - Quick Start (NNX): getting-started/quickstart_nnx.md
+  - Tutorials:
+      - Intro — Equinox regression: tutorials/eqx_regression.ipynb
+      - Intro — NNX image classification (MNIST): tutorials/nnx_mnist.ipynb
+      - Advanced — Stateful EQX models (BatchNorm): tutorials/eqx_stateful.ipynb
+      - Advanced — Custom callbacks: tutorials/custom_callbacks.ipynb
+      - Advanced — Data sharding: tutorials/data_sharding.ipynb
+  - API Reference:
+      - Trainers: api/trainers.md
+      - Callbacks: api/callbacks.md
+      - Data Loaders: api/dataloaders.md
+      - Types: api/types.md
+      - File Handler: api/file_handler.md
+  - Concepts:
+      - Architecture overview: concepts/architecture.md
+      - Step functions: concepts/step_functions.md
+      - Callback hooks: concepts/callbacks.md
+      - Sharding: concepts/sharding.md
