@@ -23,7 +23,7 @@
      inkscape:deskcolor="#505050"
      showgrid="false"
      inkscape:zoom="3.12"
-     inkscape:cx="180.12821"
+     inkscape:cx="161.85897"
      inkscape:cy="48.717949"
      inkscape:window-width="2560"
      inkscape:window-height="1382"
@@ -203,15 +203,6 @@
        gradientUnits="userSpaceOnUse" />
   </defs>
   <!-- Background -->
-  <rect
-     width="332.11273"
-     height="114.70103"
-     rx="13.284509"
-     fill="#24273a"
-     id="rect226"
-     x="0"
-     y="0"
-     style="stroke-width:0.771501" />
   <!-- Subtle dot grid -->
   <!-- === ICON: T shape where crossbar = rail track, stem = neural branches === -->
   <!-- T crossbar as rail track -->
@@ -537,7 +528,8 @@
      font-weight="700"
      letter-spacing="-2"
      fill="#cad3f5"
-     id="text306">train</text>
+     id="text306"
+     style="stroke:#24273a;stroke-opacity:1">train</text>
   <text
      x="268.83478"
      y="78.489899"
