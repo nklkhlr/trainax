@@ -110,16 +110,7 @@ output = "coverage/coverage.xml"
 show_contexts = true
 directory = "coverage/html"
 
-[dependency-groups]
-dev = [
-    "debugpy>=1.8.16",
-    "jupyter>=1.1.1",
-    "matplotlib>=3.10.7",
-    "pytest-cov>=6.2.1",
-    "ruff>=0.12.10",
-    "tensorflow>=2.20.0",
-    "tensorflow-datasets>=4.9.9",
-]
+[project.optional-dependencies]
 eqx = [
     "equinox>=0.13.2",
 ]
@@ -132,5 +123,16 @@ docs = [
     "mkdocstrings[python]>=0.29",
     "mkdocs-jupyter>=0.25",
     "black",
+]
+
+[dependency-groups]
+dev = [
+    "debugpy>=1.8.16",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.7",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12.10",
+    "tensorflow>=2.20.0",
+    "tensorflow-datasets>=4.9.9",
 ]
 
